@@ -5,9 +5,7 @@ mam_current <- lapply(mam_sdm, function(x) read_sf(paste("output/SDM/Current/Sha
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 mam_future <- lapply(mam_sdm, function(x) read_sf(paste("output/SDM/Future/Shapefiles/", x, ".shp", sep = "")) %>%
-                       mutate(SSP = sapply(str_split(Model, " "), "[[", 2),
-                              Model = sapply(str_split(Model, " "), "[[", 1),
-                              Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
+                       mutate(Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 
@@ -55,13 +53,15 @@ mam_data <- mam_data %>%
 # combine all data and omit species without ranges
 mam_all <- bind_rows(mam_current, mam_future) %>%
   filter(Binomial %in% mam_data$Binomial) %>%
-  mutate(id = str_replace(paste(Binomial, Model, SSP, Year, sep = "_"), "NA_NA_NA", "2020"),
-         Model = case_when(is.na(Model) ~ "current",
-                           TRUE ~ Model),
-         Year = case_when(is.na(Year) ~ "current",
-                          TRUE ~ Year),
-         SSP = case_when(is.na(SSP) ~ "current",
-                         TRUE ~ SSP))
+  mutate(
+    id = str_replace(paste(Binomial, Model, Dispersal, Year, sep = "_"), "NA_NA_NA", "2020"),
+    Model = case_when(is.na(Model) ~ "current",
+                      TRUE ~ Model),
+    Year = case_when(is.na(Year) ~ "current",
+                     TRUE ~ Year),
+    Dispersal = case_when(is.na(Dispersal) ~ "current",
+                          TRUE ~ Dispersal)
+  )
 
 mam_all_sp <- st_centroid(mam_all)
 
@@ -71,7 +71,7 @@ mam_all <- mam_all[-empty, ]
 
 # format for xgboost
 pred <-
-  cbind(mam_data %>% filter(Year == 2010) %>% select(-c(Binomial, SSP, Year, Model)),
+  cbind(mam_data %>% filter(Year == 2010) %>% select(-c(Binomial, Dispersal, Year, Model)),
         st_coordinates(mam_all_sp %>% filter(Year == "current")))
 
 rownames(pred) <- filter(mam_all_sp, Year == "current")$Binomial
@@ -156,18 +156,18 @@ mam_iucn_current <- mam_data %>% filter(Year == 2010) %>%
                               Binomial %in% ne_dd$en ~ "EN",
                               Binomial %in% ne_dd$cr ~ "CR",
                               TRUE ~ category)) %>%
-  select(Binomial, Year, SSP, Model, BIOME, category) %>%
+  select(Binomial, Year, Dispersal, Model, BIOME, category) %>%
   left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 
 ## predict future projections
 mam_iucn_future <- list()
 for(k in 1:24){
-  mam_temp <- mam_data %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]]) %>% select(-c(Binomial, SSP, Year, Model))
+  mam_temp <- mam_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>% select(-c(Binomial, Dispersal, Year, Model))
   
   pred_future <- cbind(mam_temp %>% filter(area > 0),
-                       st_coordinates(mam_all_sp %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])))
+                       st_coordinates(mam_all_sp %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])))
   
-  rownames(pred_future) <- filter(mam_all_sp, Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])$Binomial
+  rownames(pred_future) <- filter(mam_all_sp, Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])$Binomial
   
   future <- pred_ass(pred = pred_future[, -12],
                       biomes = biomes,
@@ -176,13 +176,13 @@ for(k in 1:24){
                                     aa_envu,
                                     aa_nthrt))
   
-  mam_iucn_future[[k]] <- mam_data %>% filter(Year == years[[k]], SSP == ssps[[k]], Model == models[[k]]) %>%
+  mam_iucn_future[[k]] <- mam_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>%
     mutate(category = case_when(Binomial %in% future$lc ~ "LC",
                                 Binomial %in% future$nt ~ "NT",
                                 Binomial %in% future$vu ~ "VU",
                                 Binomial %in% future$en ~ "EN",
                                 Binomial %in% future$cr ~ "CR")) %>%
-    select(Binomial, Year, SSP, Model, BIOME, category)
+    select(Binomial, Year, Dispersal, Model, BIOME, category)
 }
 mam_iucn_future <- bind_rows(mam_iucn_future) %>% left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 
@@ -209,9 +209,7 @@ bird_current <- lapply(bird_sdm, function(x) read_sf(paste("output/SDM/Current/S
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 bird_future <- lapply(bird_sdm, function(x) read_sf(paste("output/SDM/Future/Shapefiles/", x, ".shp", sep = "")) %>%
-                       mutate(SSP = sapply(str_split(Model, " "), "[[", 2),
-                              Model = sapply(str_split(Model, " "), "[[", 1),
-                              Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
+                       mutate(Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 
@@ -258,13 +256,15 @@ bird_data <- bird_data %>%
 # combine all data and omit species without ranges
 bird_all <- bind_rows(bird_current, bird_future) %>%
   filter(Binomial %in% bird_data$Binomial) %>%
-  mutate(id = str_replace(paste(Binomial, Model, SSP, Year, sep = "_"), "NA_NA_NA", "2020"),
-         Model = case_when(is.na(Model) ~ "current",
-                           TRUE ~ Model),
-         Year = case_when(is.na(Year) ~ "current",
-                          TRUE ~ Year),
-         SSP = case_when(is.na(SSP) ~ "current",
-                         TRUE ~ SSP))
+  mutate(
+    id = str_replace(paste(Binomial, Model, Dispersal, Year, sep = "_"), "NA_NA_NA", "2020"),
+    Model = case_when(is.na(Model) ~ "current",
+                      TRUE ~ Model),
+    Year = case_when(is.na(Year) ~ "current",
+                     TRUE ~ Year),
+    Dispersal = case_when(is.na(Dispersal) ~ "current",
+                          TRUE ~ Dispersal)
+  )
 
 bird_all_sp <- st_centroid(bird_all)
 
@@ -274,7 +274,7 @@ bird_all <- bird_all[-empty, ]
 
 # format for xgboost
 pred <-
-  cbind(bird_data %>% filter(Year == 2010) %>% select(-c(Binomial, SSP, Year, Model)),
+  cbind(bird_data %>% filter(Year == 2010) %>% select(-c(Binomial, Dispersal, Year, Model)),
         st_coordinates(bird_all_sp %>% filter(Year == "current")))
 
 rownames(pred) <- filter(bird_all_sp, Year == "current")$Binomial
@@ -362,18 +362,18 @@ bird_iucn_current <- bird_data %>% filter(Year == 2010) %>%
                               Binomial %in% ne_dd$en ~ "EN",
                               Binomial %in% ne_dd$cr ~ "CR",
                               TRUE ~ category)) %>%
-  select(Binomial, Year, SSP, Model, BIOME, category) %>%
+  select(Binomial, Year, Dispersal, Model, BIOME, category) %>%
   left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 
 ## predict future projections
 bird_iucn_future <- list()
 for(k in 1:24){
-  bird_temp <- bird_data %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]]) %>% select(-c(Binomial, SSP, Year, Model))
+  bird_temp <- bird_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>% select(-c(Binomial, Dispersal, Year, Model))
   
   pred_future <- cbind(bird_temp %>% filter(area > 0),
-                       st_coordinates(bird_all_sp %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])))
+                       st_coordinates(bird_all_sp %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])))
   
-  rownames(pred_future) <- filter(bird_all_sp, Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])$Binomial
+  rownames(pred_future) <- filter(bird_all_sp, Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])$Binomial
   
   future <- pred_ass(pred = pred_future[, -12],
                       biomes = biomes,
@@ -382,13 +382,13 @@ for(k in 1:24){
                                     aa_envu,
                                     aa_nthrt))
   
-  bird_iucn_future[[k]] <- bird_data %>% filter(Year == years[[k]], SSP == ssps[[k]], Model == models[[k]]) %>%
+  bird_iucn_future[[k]] <- bird_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>%
     mutate(category = case_when(Binomial %in% future$lc ~ "LC",
                                 Binomial %in% future$nt ~ "NT",
                                 Binomial %in% future$vu ~ "VU",
                                 Binomial %in% future$en ~ "EN",
                                 Binomial %in% future$cr ~ "CR")) %>%
-    select(Binomial, Year, SSP, Model, BIOME, category)
+    select(Binomial, Year, Dispersal, Model, BIOME, category)
 }
 bird_iucn_future <- bind_rows(bird_iucn_future) %>% left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 
@@ -415,9 +415,7 @@ rep_current <- lapply(rep_sdm, function(x) read_sf(paste("output/SDM/Current/Sha
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 rep_future <- lapply(rep_sdm, function(x) read_sf(paste("output/SDM/Future/Shapefiles/", x, ".shp", sep = "")) %>%
-                       mutate(SSP = sapply(str_split(Model, " "), "[[", 2),
-                              Model = sapply(str_split(Model, " "), "[[", 1),
-                              Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
+                       mutate(Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 
@@ -465,13 +463,15 @@ rep_data <- rep_data %>%
 # combine all data and omit species without ranges
 rep_all <- bind_rows(rep_current, rep_future) %>%
   filter(Binomial %in% rep_data$Binomial) %>%
-  mutate(id = str_replace(paste(Binomial, Model, SSP, Year, sep = "_"), "NA_NA_NA", "2020"),
-         Model = case_when(is.na(Model) ~ "current",
-                           TRUE ~ Model),
-         Year = case_when(is.na(Year) ~ "current",
-                          TRUE ~ Year),
-         SSP = case_when(is.na(SSP) ~ "current",
-                         TRUE ~ SSP))
+  mutate(
+    id = str_replace(paste(Binomial, Model, Dispersal, Year, sep = "_"), "NA_NA_NA", "2020"),
+    Model = case_when(is.na(Model) ~ "current",
+                      TRUE ~ Model),
+    Year = case_when(is.na(Year) ~ "current",
+                     TRUE ~ Year),
+    Dispersal = case_when(is.na(Dispersal) ~ "current",
+                          TRUE ~ Dispersal)
+  )
 
 rep_all_sp <- st_centroid(rep_all)
 
@@ -481,7 +481,7 @@ rep_all <- rep_all[-empty, ]
 
 # format for xgboost
 pred <-
-  cbind(rep_data %>% filter(Year == 2010) %>% select(-c(Binomial, SSP, Year, Model)),
+  cbind(rep_data %>% filter(Year == 2010) %>% select(-c(Binomial, Dispersal, Year, Model)),
         st_coordinates(rep_all_sp %>% filter(Year == "current")))
 
 rownames(pred) <- filter(rep_all_sp, Year == "current")$Binomial
@@ -567,18 +567,18 @@ rep_iucn_current <- rep_data %>% filter(Year == 2010) %>%
                               Binomial %in% ne_dd$en ~ "EN",
                               Binomial %in% ne_dd$cr ~ "CR",
                               TRUE ~ category)) %>%
-  select(Binomial, Year, SSP, Model, BIOME, category) %>%
+  select(Binomial, Year, Dispersal, Model, BIOME, category) %>%
   left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 
 ## predict future projections
 rep_iucn_future <- list()
 for(k in 1:24){
-  rep_temp <- rep_data %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]]) %>% select(-c(Binomial, SSP, Year, Model))
+  rep_temp <- rep_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>% select(-c(Binomial, Dispersal, Year, Model))
   
   pred_future <- cbind(rep_temp %>% filter(area > 0),
-                       st_coordinates(rep_all_sp %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])))
+                       st_coordinates(rep_all_sp %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])))
   
-  rownames(pred_future) <- filter(rep_all_sp, Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])$Binomial
+  rownames(pred_future) <- filter(rep_all_sp, Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])$Binomial
   
   future <- pred_ass(pred = pred_future[, -12],
                       biomes = biomes,
@@ -587,13 +587,13 @@ for(k in 1:24){
                                     aa_envu,
                                     aa_nthrt))
   
-  rep_iucn_future[[k]] <- rep_data %>% filter(Year == years[[k]], SSP == ssps[[k]], Model == models[[k]]) %>%
+  rep_iucn_future[[k]] <- rep_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>%
     mutate(category = case_when(Binomial %in% future$lc ~ "LC",
                                 Binomial %in% future$nt ~ "NT",
                                 Binomial %in% future$vu ~ "VU",
                                 Binomial %in% future$en ~ "EN",
                                 Binomial %in% future$cr ~ "CR")) %>%
-    select(Binomial, Year, SSP, Model, BIOME, category)
+    select(Binomial, Year, Dispersal, Model, BIOME, category)
 }
 rep_iucn_future <- bind_rows(rep_iucn_future) %>% left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 
@@ -620,9 +620,7 @@ amph_current <- lapply(amph_sdm, function(x) read_sf(paste("output/SDM/Current/S
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 amph_future <- lapply(amph_sdm, function(x) read_sf(paste("output/SDM/Future/Shapefiles/", x, ".shp", sep = "")) %>%
-                       mutate(SSP = sapply(str_split(Model, " "), "[[", 2),
-                              Model = sapply(str_split(Model, " "), "[[", 1),
-                              Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
+                       mutate(Year = sapply(str_split(Year, "-"), "[[", 2))) %>%
   bind_rows() %>%
   st_transform(st_crs(tet_dist))
 
@@ -669,13 +667,15 @@ amph_data <- amph_data %>%
 # combine all data and omit species without ranges
 amph_all <- bind_rows(amph_current, amph_future) %>%
   filter(Binomial %in% amph_data$Binomial) %>%
-  mutate(id = str_replace(paste(Binomial, Model, SSP, Year, sep = "_"), "NA_NA_NA", "2020"),
-         Model = case_when(is.na(Model) ~ "current",
-                           TRUE ~ Model),
-         Year = case_when(is.na(Year) ~ "current",
-                          TRUE ~ Year),
-         SSP = case_when(is.na(SSP) ~ "current",
-                         TRUE ~ SSP))
+  mutate(
+    id = str_replace(paste(Binomial, Model, Dispersal, Year, sep = "_"), "NA_NA_NA", "2020"),
+    Model = case_when(is.na(Model) ~ "current",
+                      TRUE ~ Model),
+    Year = case_when(is.na(Year) ~ "current",
+                     TRUE ~ Year),
+    Dispersal = case_when(is.na(Dispersal) ~ "current",
+                          TRUE ~ Dispersal)
+  )
 
 amph_all_sp <- st_centroid(amph_all)
 
@@ -685,7 +685,7 @@ amph_all <- amph_all[-empty, ]
 
 # format for xgboost
 pred <-
-  cbind(amph_data %>% filter(Year == 2010) %>% select(-c(Binomial, SSP, Year, Model)),
+  cbind(amph_data %>% filter(Year == 2010) %>% select(-c(Binomial, Dispersal, Year, Model)),
         st_coordinates(amph_all_sp %>% filter(Year == "current")))
 
 rownames(pred) <- filter(amph_all_sp, Year == "current")$Binomial
@@ -770,18 +770,18 @@ amph_iucn_current <- amph_data %>% filter(Year == 2010) %>%
                               Binomial %in% ne_dd$en ~ "EN",
                               Binomial %in% ne_dd$cr ~ "CR",
                               TRUE ~ category)) %>%
-  select(Binomial, Year, SSP, Model, BIOME, category) %>%
+  select(Binomial, Year, Dispersal, Model, BIOME, category) %>%
   left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 
 ## predict future projections
 amph_iucn_future <- list()
 for(k in 1:24){
-  amph_temp <- amph_data %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]]) %>% select(-c(Binomial, SSP, Year, Model))
+  amph_temp <- amph_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>% select(-c(Binomial, Dispersal, Year, Model))
   
   pred_future <- cbind(amph_temp %>% filter(area > 0),
-                       st_coordinates(amph_all_sp %>% filter(Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])))
+                       st_coordinates(amph_all_sp %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])))
   
-  rownames(pred_future) <- filter(amph_all_sp, Year == years[[k]], Model == models[[k]], SSP == ssps[[k]])$Binomial
+  rownames(pred_future) <- filter(amph_all_sp, Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]])$Binomial
   
   future <- pred_ass(pred = pred_future[, -12],
                       biomes = biomes,
@@ -790,13 +790,13 @@ for(k in 1:24){
                                     aa_envu,
                                     aa_nthrt))
   
-  amph_iucn_future[[k]] <- amph_data %>% filter(Year == years[[k]], SSP == ssps[[k]], Model == models[[k]]) %>%
+  amph_iucn_future[[k]] <- amph_data %>% filter(Year == years[[k]], Model == ssps[[k]], Dispersal == disps[[k]]) %>%
     mutate(category = case_when(Binomial %in% future$lc ~ "LC",
                                 Binomial %in% future$nt ~ "NT",
                                 Binomial %in% future$vu ~ "VU",
                                 Binomial %in% future$en ~ "EN",
                                 Binomial %in% future$cr ~ "CR")) %>%
-    select(Binomial, Year, SSP, Model, BIOME, category)
+    select(Binomial, Year, Dispersal, Model, BIOME, category)
 }
 amph_iucn_future <- bind_rows(amph_iucn_future) %>% left_join(read_csv("data/tet_data.csv") %>% select(Binomial, Class))
 

@@ -2,9 +2,11 @@
 .Rhistory
 .RData
 .Ruserdata
+.RDataTmp
 data/
 dispersal_scripts/
 implementing_maxent/
 learning_maxent/
 output/
 old stuff/
+my_token.txt
