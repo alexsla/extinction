@@ -5,8 +5,9 @@ library(rnaturalearth)
 library(sf)
 library(raster)
 library(biomod2)
-library(foreach)
-library(doParallel)
+library(parallel)
+library(pbapply)
+library(doSNOW)
 
 cores = detectCores()
 cl <- cores[1] - 1 ## set to use all but one thread - replace if necessary
@@ -299,10 +300,10 @@ for (i in 1:length(rep_tax)) {
                                          output.format = ".tif",
                                          nb.cpu = cl)
   
-  pr <- raster::raster(get_predictions(ens_pred)/1000)
+  pr <- raster::raster(get_predictions(ens_pred))
   names(pr) = "layer"
   
-  pr_df = as.data.frame(pr, xy = T)
+  pr_df = as.data.frame(pr/1000, xy = T)
   
   # plot habitat suitability probability
   pdf(paste("output/SDM/Current/Maps/", rep_tax[[i]], "_prob.pdf", sep = ""),
@@ -407,7 +408,7 @@ for (i in 1:length(rep_tax)) {
     st_union()
   
   # export habitat suitability under current climate conditions
-  current_predictions <- list(pr,
+  current_predictions <- list(pr/1000,
                               pr_thr)
   names(current_predictions) <-
     c("predicted_probability", "presence_absence")
@@ -457,14 +458,14 @@ for (i in 1:length(rep_tax)) {
                                             output.format = ".tif",
                                             nb.cpu = cl)
     
-    prf <- raster::raster(get_predictions(ens_predf)/1000)
+    prf <- raster::raster(get_predictions(ens_predf))
     names(prf) = "layer"
     
     # convert predicted probability to presence-absence based on threshold maximising the sum of sensitivity and specificity
     prf_thr = prf > thr$cutoff
     
     # save habitat suitability under future climate conditions
-    future_preds <- list(prf,
+    future_preds <- list(prf/1000,
                          prf_thr)
     names(future_preds) <-
       c("predicted_probability", "presence_absence")
@@ -478,189 +479,207 @@ for (i in 1:length(rep_tax)) {
   # extract all future predicted presence-absence maps
   future <- lapply(future_predictions, "[[", "presence_absence")
   
-  # alternative dispersal scenarios
-  future_nodisp <- future # no dispersal - continuous distribution required
-  future_maxdisp <- future # no dispersal limits apart from overseas
+  cl <- makeCluster(3)
+  registerDoSNOW(cl)
   
-  # iterate over all future projections
-  kmax = 4
-  for (m in 1:2) {
-    ## standard dispersal model ##
-    # for SSP set the current buffered suitable habitat to be the extant
-    current_buff <- extant_buff
-    for (k in (kmax - 3):kmax) {
-      # for each time-step
-      # if no suitable habitat exists in time step, save empty polygon
-      if (maxValue(future[[k]]) == 0)
-        future_next <- st_sf(x = st_sfc(st_multipolygon()),
-                             crs = st_crs(oz_map)) %>%
-          dplyr::mutate(Binomial = rep_tax[[i]],
-                        Model = models[[k]],
-                        Year = years[[k]])
-      else {
-        # import presence-absence map for the next time-step and convert to polygon
-        # capture instance where only one pixel remains
-        if (length(which(values(future[[k]]) == 1)) == 1) {
-          future_next <- rasterToPolygons(
-            future[[k]],
-            dissolve = T
-          ) %>%
-            st_as_sf(crs = st_crs(oz_map)) %>%
-            filter(layer > 0) %>%
-            st_cast("POLYGON")
-        } else {
-          future_next <-
-            rasterToPolygons(
-              future[[k]],
-              fun = function(x) {
-                x == 1
-              },
-              dissolve = T
-            ) %>%
-            st_as_sf(crs = st_crs(oz_map)) %>%
-            st_cast("POLYGON")
-        }
-        
-        # find and filter out areas of suitable habitat which do not intersect with buffered suitable habitat for current time-step
-        future_oz <- st_intersects(future_next, current_buff)
-        future_logical = lengths(future_oz) > 0
-        
-        future_next <- future_next[future_logical, ] %>%
-          st_union() %>%
-          st_as_sf() %>%
-          dplyr::mutate(Binomial = rep_tax[[i]],
-                        Model = models[[k]],
-                        Year = years[[k]])
-      }
-      
-      # save filtered suitable habitat
-      future[[k]] <- future_next
-      
-      # update buffered current suitable habitat for next iteration
-      current_buff <- future_next %>%
-        st_transform(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=km +no_defs") %>%
-        st_buffer(dist = 150) %>% # numeric buffer of 150 km max dispersal range
-        st_transform(crs = st_crs(oz_map)) %>%
-        st_make_valid() %>% # fix geometry errors due to buffer
-        st_intersection(oz_map) %>%
-        st_cast("POLYGON")
-      
-      current_oz <- st_intersects(current_buff, future_next)
-      current_logical = lengths(current_oz) > 0
-      
-      current_buff <- current_buff[current_logical, ] %>%
-        st_union() %>%
-        st_as_sf() %>%
-        dplyr::mutate(Binomial = rep_tax[[i]],
-                      Model = models[[k]],
-                      Year = years[[k]])
-    }
-    
-    ## no dispersal ##
-    for (k in (kmax - 3):kmax) {
-      # for each time-step
-      # if no suitable habitat exists in time step, save empty polygon
-      if (maxValue(future_nodisp[[k]]) == 0)
-        future_next <- st_sf(x = st_sfc(st_multipolygon()),
-                             crs = st_crs(oz_map)) %>%
-          dplyr::mutate(Binomial = rep_tax[[i]],
-                        Model = models[[k]],
-                        Year = years[[k]])
-      else {
-        # import presence-absence map for the next time-step and convert to polygon
-        # capture instance where only one pixel remains
-        if (length(which(values(future_nodisp[[k]]) == 1)) == 1) {
-          future_next <- rasterToPolygons(
-            future_nodisp[[k]],
-            dissolve = T
-          ) %>%
-            st_as_sf(crs = st_crs(oz_map)) %>%
-            filter(layer > 0) %>%
-            st_cast("POLYGON")
-        } else {
-          future_next <-
-            rasterToPolygons(
-              future_nodisp[[k]],
-              fun = function(x) {
-                x == 1
-              },
-              dissolve = T
-            ) %>%
-            st_as_sf(crs = st_crs(oz_map)) %>%
-            st_cast("POLYGON")
-        }
-        
-        # find and filter out areas of suitable habitat which do not intersect with buffered suitable habitat for current time-step
-        future_oz <- st_intersects(future_next, current)
-        future_logical = lengths(future_oz) > 0
-        
-        future_next <- future_next[future_logical, ] %>%
-          st_union() %>%
-          st_as_sf() %>%
-          dplyr::mutate(Binomial = rep_tax[[i]],
-                        Model = models[[k]],
-                        Year = years[[k]])
-      }
-      
-      # save filtered suitable habitat
-      future_nodisp[[k]] <- current <- future_next
-    }
-    
-    ## max dispersal ##
-    for (k in (kmax - 3):kmax) {
-      # for each time-step
-      # if no suitable habitat exists in time step, save empty polygon
-      if (maxValue(future_maxdisp[[k]]) == 0)
-        future_next <- st_sf(x = st_sfc(st_multipolygon()),
-                             crs = st_crs(oz_map)) %>%
-          dplyr::mutate(Binomial = rep_tax[[i]],
-                        Model = models[[k]],
-                        Year = years[[k]])
-      else {
-        # import presence-absence map for the next time-step and convert to polygon
-        # capture instance where only one pixel remains
-        if (length(which(values(future_maxdisp[[k]]) == 1)) == 1) {
-          future_next <- rasterToPolygons(
-            future_maxdisp[[k]],
-            dissolve = T
-          ) %>%
-            st_as_sf(crs = st_crs(oz_map)) %>%
-            filter(layer > 0) %>%
-            st_cast("POLYGON")
-        } else {
-          future_next <-
-            rasterToPolygons(
-              future_maxdisp[[k]],
-              fun = function(x) {
-                x == 1
-              },
-              dissolve = T
-            ) %>%
-            st_as_sf(crs = st_crs(oz_map)) %>%
-            st_cast("POLYGON")
-        }
-        
-        # filter out areas of suitable habitat which do not overlap landmasses with occurrences
-        future_oz <- st_intersects(future_next, landmasses)
-        future_logical = lengths(future_oz) > 0
-        
-        future_next <- future_next[future_logical, ] %>%
-          st_union() %>%
-          st_as_sf() %>%
-          dplyr::mutate(Binomial = rep_tax[[i]],
-                        Model = models[[k]],
-                        Year = years[[k]])
-      }
-      
-      # save filtered suitable habitat
-      future_maxdisp[[k]] <- future_next
-    }
-    
-    kmax = kmax + 4
-  }
-  future <- bind_rows(future)
-  future_maxdisp <- bind_rows(future_maxdisp)
-  future_nodisp <- bind_rows(future_nodisp)
+  future_all <- foreach(scenario = 1:3,
+                        .packages = c("tidyverse", "sf", "raster"),
+                        .export = c("future",
+                                    "oz_map", "extant_buff",
+                                    "rep_tax", "models", "years"),
+                        .inorder = TRUE,
+                        .errorhandling = "pass",
+                        .verbose = FALSE) %dopar% {
+                          
+                          # iterate over all future projections
+                          kmax = 4
+                          for (m in 1:2) {
+                            if(scenario == 1){
+                              ## standard dispersal model ##
+                              # for each GCM and SSP set the current buffered suitable habitat to be the extant
+                              current_buff <- extant_buff
+                              for (k in (kmax - 3):kmax) {
+                                # for each time-step
+                                # if no suitable habitat exists in time step, save empty polygon
+                                if (maxValue(future[[k]]) == 0)
+                                  future_next <- st_sf(x = st_sfc(st_multipolygon()),
+                                                       crs = st_crs(oz_map)) %>%
+                                    dplyr::mutate(Binomial = rep_tax[[i]],
+                                                  Model = models[[k]],
+                                                  Year = years[[k]])
+                                else {
+                                  # import presence-absence map for the next time-step and convert to polygon
+                                  # capture instance where only one pixel remains
+                                  if (length(which(values(future[[k]]) == 1)) == 1) {
+                                    future_next <- rasterToPolygons(
+                                      future[[k]],
+                                      dissolve = T
+                                    ) %>%
+                                      st_as_sf(crs = st_crs(oz_map)) %>%
+                                      filter(layer > 0) %>%
+                                      st_cast("POLYGON")
+                                  } else {
+                                    future_next <-
+                                      rasterToPolygons(
+                                        future[[k]],
+                                        fun = function(x) {
+                                          x == 1
+                                        },
+                                        dissolve = T
+                                      ) %>%
+                                      st_as_sf(crs = st_crs(oz_map)) %>%
+                                      st_cast("POLYGON")
+                                  }
+                                  
+                                  # find and filter out areas of suitable habitat which do not intersect with buffered suitable habitat for current time-step
+                                  future_oz <- st_intersects(future_next, current_buff)
+                                  future_logical = lengths(future_oz) > 0
+                                  
+                                  future_next <- future_next[future_logical, ] %>%
+                                    st_union() %>%
+                                    st_as_sf() %>%
+                                    dplyr::mutate(Binomial = rep_tax[[i]],
+                                                  Model = models[[k]],
+                                                  Year = years[[k]])
+                                }
+                                
+                                # save filtered suitable habitat
+                                future[[k]] <- future_next
+                                
+                                # update buffered current suitable habitat for next iteration
+                                current_buff <- future_next %>%
+                                  st_transform(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=km +no_defs") %>%
+                                  st_buffer(dist = 150) %>% # numeric buffer of 150 km max dispersal range
+                                  st_transform(crs = st_crs(oz_map)) %>%
+                                  st_make_valid() %>% # fix geometry errors due to buffer
+                                  st_intersection(oz_map) %>%
+                                  st_cast("POLYGON")
+                                
+                                current_oz <- st_intersects(current_buff, future_next)
+                                current_logical = lengths(current_oz) > 0
+                                
+                                current_buff <- current_buff[current_logical, ] %>%
+                                  st_union() %>%
+                                  st_as_sf() %>%
+                                  dplyr::mutate(Binomial = rep_tax[[i]],
+                                                Model = models[[k]],
+                                                Year = years[[k]])
+                              }
+                            }
+                            
+                            if(scenario == 2){
+                              ## no dispersal ##
+                              for (k in (kmax - 3):kmax) {
+                                # for each time-step
+                                # if no suitable habitat exists in time step, save empty polygon
+                                if (maxValue(future[[k]]) == 0)
+                                  future_next <- st_sf(x = st_sfc(st_multipolygon()),
+                                                       crs = st_crs(oz_map)) %>%
+                                    dplyr::mutate(Binomial = rep_tax[[i]],
+                                                  Model = models[[k]],
+                                                  Year = years[[k]])
+                                else {
+                                  # import presence-absence map for the next time-step and convert to polygon
+                                  # capture instance where only one pixel remains
+                                  if (length(which(values(future[[k]]) == 1)) == 1) {
+                                    future_next <- rasterToPolygons(
+                                      future[[k]],
+                                      dissolve = T
+                                    ) %>%
+                                      st_as_sf(crs = st_crs(oz_map)) %>%
+                                      filter(layer > 0) %>%
+                                      st_cast("POLYGON")
+                                  } else {
+                                    future_next <-
+                                      rasterToPolygons(
+                                        future[[k]],
+                                        fun = function(x) {
+                                          x == 1
+                                        },
+                                        dissolve = T
+                                      ) %>%
+                                      st_as_sf(crs = st_crs(oz_map)) %>%
+                                      st_cast("POLYGON")
+                                  }
+                                  
+                                  # find and filter out areas of suitable habitat which do not intersect with buffered suitable habitat for current time-step
+                                  future_oz <- st_intersects(future_next, current)
+                                  future_logical = lengths(future_oz) > 0
+                                  
+                                  future_next <- future_next[future_logical, ] %>%
+                                    st_union() %>%
+                                    st_as_sf() %>%
+                                    dplyr::mutate(Binomial = rep_tax[[i]],
+                                                  Model = models[[k]],
+                                                  Year = years[[k]])
+                                }
+                                
+                                # save filtered suitable habitat
+                                future[[k]] <- current <- future_next
+                              }
+                            }
+                            
+                            if(scenario == 3){
+                              ## max dispersal ##
+                              for (k in (kmax - 3):kmax) {
+                                # for each time-step
+                                # if no suitable habitat exists in time step, save empty polygon
+                                if (maxValue(future[[k]]) == 0)
+                                  future_next <- st_sf(x = st_sfc(st_multipolygon()),
+                                                       crs = st_crs(oz_map)) %>%
+                                    dplyr::mutate(Binomial = rep_tax[[i]],
+                                                  Model = models[[k]],
+                                                  Year = years[[k]])
+                                else {
+                                  # import presence-absence map for the next time-step and convert to polygon
+                                  # capture instance where only one pixel remains
+                                  if (length(which(values(future[[k]]) == 1)) == 1) {
+                                    future_next <- rasterToPolygons(
+                                      future[[k]],
+                                      dissolve = T
+                                    ) %>%
+                                      st_as_sf(crs = st_crs(oz_map)) %>%
+                                      filter(layer > 0) %>%
+                                      st_cast("POLYGON")
+                                  } else {
+                                    future_next <-
+                                      rasterToPolygons(
+                                        future[[k]],
+                                        fun = function(x) {
+                                          x == 1
+                                        },
+                                        dissolve = T
+                                      ) %>%
+                                      st_as_sf(crs = st_crs(oz_map)) %>%
+                                      st_cast("POLYGON")
+                                  }
+                                  
+                                  # filter out areas of suitable habitat which do not overlap landmasses with occurrences
+                                  future_oz <- st_intersects(future_next, landmasses)
+                                  future_logical = lengths(future_oz) > 0
+                                  
+                                  future_next <- future_next[future_logical, ] %>%
+                                    st_union() %>%
+                                    st_as_sf() %>%
+                                    dplyr::mutate(Binomial = rep_tax[[i]],
+                                                  Model = models[[k]],
+                                                  Year = years[[k]])
+                                }
+                                
+                                # save filtered suitable habitat
+                                future[[k]] <- future_next
+                              }
+                            }
+                            
+                            kmax = kmax + 4
+                          }
+                          future
+                        }
+  stopCluster(cl)
+  
+  future <- bind_rows(future_all[[1]])
+  future_maxdisp <- bind_rows(future_all[[3]])
+  future_nodisp <- bind_rows(future_all[[2]])
   
   future <- bind_rows(future %>% mutate(Dispersal = "Mean"),
                       future_nodisp %>% mutate(Dispersal = "Min"),
