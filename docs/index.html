@@ -874,9 +874,18 @@ predicted future ranges to calculate degrees of overlap for each species
 in the dataset.</p>
 <pre class="r"><code>library(stars) # install.packages(&quot;stars&quot;)
 library(ncdf4) # install.packages(&quot;ncdf4&quot;)
-library(rgdal) # install.packages(&quot;rgdal&quot;)
 
 source(&quot;scripts/invasive_species.R&quot;)
+
+# generate vector of taxa
+inv_tax &lt;-
+  c(
+    &quot;Rhinella marina&quot;,
+    &quot;Felis catus&quot;,
+    &quot;Vulpes vulpes&quot;,
+    &quot;Camelus dromedarius&quot;,
+    &quot;Oryctolagus cuniculus&quot;
+  )
 
 # generate vector of taxa
 inv_tax &lt;-
@@ -971,16 +980,18 @@ for (i in 1:length(inv_tax)) {
   
   tet_inv_current &lt;- list()
   for (x in 1:nrow(tet_current)) {
-    if (is.null(st_as_sf(
-      stars::st_as_stars(mask(
-        inv_current_r, as(tet_current[x,], &quot;Spatial&quot;)
-      )),
-      as_points = FALSE,
-      merge = TRUE
-    )))
-      tet_inv_current[[x]] &lt;- tibble(area_inv = 0,
-                                     Binomial = tet_current[x,]$Binomial)
-    else
+    if (
+      nrow(st_as_sf(
+        stars::st_as_stars(mask(
+          inv_current_r, as(tet_current[x,], &quot;Spatial&quot;)
+        )),
+        as_points = FALSE,
+        merge = TRUE
+      )) == 0
+    ) {
+      tet_inv_current[[x]] &lt;- tibble(Binomial = tet_current[x,]$Binomial,
+                                     area_inv = 0)
+    } else {
       tet_inv_current[[x]] &lt;-
         st_as_sf(stars::st_as_stars(mask(
           inv_current_r, as(tet_current[x,], &quot;Spatial&quot;)
@@ -994,6 +1005,10 @@ for (i in 1:length(inv_tax)) {
                Binomial = tet_current[x,]$Binomial) %&gt;%
         as_tibble() %&gt;%
         dplyr::select(Binomial, area_inv)
+    }
+    
+    writeLines(paste0(&quot;completed: &quot;, tet_current[x,]$Binomial, &quot; overlap with &quot;, inv_tax[i], &quot;; current&quot;),
+               &quot;output/progress.txt&quot;)
   }
   
   inv_current_overlap[[i]] &lt;-
@@ -1020,31 +1035,30 @@ for (i in 1:length(inv_tax)) {
     
     tet_inv_temp &lt;- list()
     for (x in 1:nrow(tet.temp)) {
-      if (st_is_empty(tet.temp[x,]))
+      if (st_is_empty(tet.temp[x,])){
         tet_inv_temp[[x]] &lt;- tibble(
-          area_inv = 0,
           Binomial = tet.temp[x,]$Binomial,
+          area_inv = 0,
           Model = tet.temp[x,]$Model,
           Year = tet.temp[x,]$Year,
           Dispersal = tet.temp[x,]$Dispersal
         )
-      else
-        
-        if (is.null(st_as_sf(
-          stars::st_as_stars(mask(inv.temp, as(
-            tet.temp[x,], &quot;Spatial&quot;
-          ))),
+      } else {
+        if (nrow(st_as_sf(
+          stars::st_as_stars(mask(
+            inv.temp, as(tet.temp[x,], &quot;Spatial&quot;)
+          )),
           as_points = FALSE,
           merge = TRUE
-        )))
+        )) == 0){
           tet_inv_temp[[x]] &lt;- tibble(
-            area_inv = 0,
             Binomial = tet.temp[x,]$Binomial,
+            area_inv = 0,
             Model = tet.temp[x,]$Model,
             Year = tet.temp[x,]$Year,
             Dispersal = tet.temp[x,]$Dispersal
           )
-        else
+        } else{
           tet_inv_temp[[x]] &lt;-
             st_as_sf(stars::st_as_stars(mask(inv.temp, as(
               tet.temp[x,], &quot;Spatial&quot;
@@ -1055,14 +1069,19 @@ for (i in 1:length(inv_tax)) {
               &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
             ) %&gt;%
             mutate(
-              area_inv = as.numeric(units::set_units(st_area(geometry), &quot;km2&quot;)),
               Binomial = tet.temp[x,]$Binomial,
+              area_inv = as.numeric(units::set_units(st_area(geometry), &quot;km2&quot;)),
               Model = tet.temp[x,]$Model,
               Year = tet.temp[x,]$Year,
               Dispersal = tet.temp[x,]$Dispersal
             ) %&gt;%
             as_tibble() %&gt;%
             dplyr::select(Binomial, area_inv, Model, Year, Dispersal)
+        }
+      }
+      
+      writeLines(paste0(&quot;completed: &quot;, tet_current[x,]$Binomial, &quot; overlap with &quot;, inv_tax[i], &quot;; future scenario &quot;, k),
+                 &quot;output/progress.txt&quot;)
     }
     
     tet_inv_future[[k]] &lt;-
@@ -1244,16 +1263,18 @@ hp.future.r &lt;- mask(hp.future.r, as(oz_map, &quot;Spatial&quot;))
 # intersect tetrapod shapefiles with land-use to get area overlapping with land-use
 tet_lu_current &lt;- list()
 for (x in 1:nrow(tet_current)) {
-  if (is.null(st_as_sf(
-    stars::st_as_stars(mask(
-      lu.baseline.r &gt;= 0.5, as(tet_current[x,], &quot;Spatial&quot;)
-    )),
-    as_points = FALSE,
-    merge = TRUE
-  )))
-    tet_lu_current[[x]] &lt;- tibble(lu = 0,
-                                  Binomial = tet_current[x,]$Binomial)
-  else
+  if (
+    nrow(st_as_sf(
+      stars::st_as_stars(mask(
+        lu.baseline.r &gt;= 0.5, as(tet_current[x,], &quot;Spatial&quot;)
+      )),
+      as_points = FALSE,
+      merge = TRUE
+    )) == 0
+  ) {
+    tet_lu_current[[x]] &lt;- tibble(Binomial = tet_current[x,]$Binomial,
+                                  lu = 0)
+  } else {
     tet_lu_current[[x]] &lt;-
       st_as_sf(stars::st_as_stars(mask(
         lu.baseline.r &gt;= 0.5, as(tet_current[x,], &quot;Spatial&quot;)
@@ -1268,6 +1289,7 @@ for (x in 1:nrow(tet_current)) {
              Binomial = tet_current[x,]$Binomial) %&gt;%
       as_tibble() %&gt;%
       dplyr::select(Binomial, lu)
+  }
 }
 
 tet_lu_current &lt;-
@@ -1283,31 +1305,32 @@ for (i in 1:8) {
   
   tet_lu_temp &lt;- list()
   for (x in 1:nrow(tet.temp)) {
-    if (st_is_empty(tet.temp[x,]))
+    if (st_is_empty(tet.temp[x,])){
       tet_lu_temp[[x]] &lt;- tibble(
-        area_inv = 0,
         Binomial = tet.temp[x,]$Binomial,
+        lu = 0,
         Model = tet.temp[x,]$Model,
         Year = tet.temp[x,]$Year,
         Dispersal = tet.temp[x,]$Dispersal
       )
-    else
-      
-      if (is.null(st_as_sf(
-        stars::st_as_stars(mask(
-          lu.temp &gt;= 0.5, as(tet.temp[x,], &quot;Spatial&quot;)
-        )),
-        as_points = FALSE,
-        merge = TRUE
-      )))
+    } else {
+      if (
+        nrow(st_as_sf(
+          stars::st_as_stars(mask(
+            lu.temp &gt;= 0.5, as(tet.temp[x,], &quot;Spatial&quot;)
+          )),
+          as_points = FALSE,
+          merge = TRUE
+        )) == 0
+      ){
         tet_lu_temp[[x]] &lt;- tibble(
-          lu = 0,
           Binomial = tet.temp[x,]$Binomial,
+          lu = 0,
           Model = tet.temp[x,]$Model,
           Year = tet.temp[x,]$Year,
           Dispersal = tet.temp[x,]$Dispersal
         )
-      else
+      } else {
         tet_lu_temp[[x]] &lt;-
           st_as_sf(stars::st_as_stars(mask(
             lu.temp &gt;= 0.5, as(tet.temp[x,], &quot;Spatial&quot;)
@@ -1319,14 +1342,16 @@ for (i in 1:8) {
             &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
           ) %&gt;%
           mutate(
-            lu = as.numeric(units::set_units(st_area(geometry), &quot;km2&quot;)),
             Binomial = tet.temp[x,]$Binomial,
+            lu = 0,
             Model = tet.temp[x,]$Model,
             Year = tet.temp[x,]$Year,
             Dispersal = tet.temp[x,]$Dispersal
           ) %&gt;%
           as_tibble() %&gt;%
-          dplyr::select(Binomial, lu, Model, Year, Dispersal)
+          dplyr::select(Binomial, lu, Model, Year, Dispersal) 
+      }
+    }
   }
   
   tet_lu_future[[i]] &lt;- bind_rows(tet_lu_temp)
@@ -1342,30 +1367,33 @@ tet_lu &lt;- bind_rows(tet_lu_current, tet_lu_future)
 # intersect tetrapod shapefiles with human population to get area overlapping with human population
 tet_hp_current &lt;- list()
 for (x in 1:nrow(tet_current)) {
-  if (is.null(st_as_sf(
-    stars::st_as_stars(mask(
-      hp.baseline.r &gt;= 100, as(tet_current[x,], &quot;Spatial&quot;)
-    )),
-    as_points = FALSE,
-    merge = TRUE
-  )))
-    tet_hp_current[[x]] &lt;- tibble(hp = 0,
-                                  Binomial = tet_current[x,]$Binomial)
-  else
+  if (
+    nrow(st_as_sf(
+      stars::st_as_stars(mask(
+        hp.baseline.r &gt;= 100, as(tet_current[x,], &quot;Spatial&quot;)
+      )),
+      as_points = FALSE,
+      merge = TRUE
+    )) == 0
+  ) {
+    tet_hp_current[[x]] &lt;- tibble(Binomial = tet_current[x,]$Binomial,
+                                  hp = 0)
+  } else {
     tet_hp_current[[x]] &lt;-
       st_as_sf(stars::st_as_stars(mask(
         hp.baseline.r &gt;= 100, as(tet_current[x,], &quot;Spatial&quot;)
       )),
       as_points = FALSE,
       merge = TRUE) %&gt;%
+      filter(layer == 1) %&gt;%
       st_transform(
         &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
       ) %&gt;%
-      filter(layer == 1) %&gt;%
       mutate(hp = as.numeric(units::set_units(st_area(geometry), &quot;km2&quot;)),
              Binomial = tet_current[x,]$Binomial) %&gt;%
       as_tibble() %&gt;%
       dplyr::select(Binomial, hp)
+  }
 }
 
 tet_hp_current &lt;-
@@ -1381,31 +1409,32 @@ for (i in 1:8) {
   
   tet_hp_temp &lt;- list()
   for (x in 1:nrow(tet.temp)) {
-    if (st_is_empty(tet.temp[x,]))
+    if (st_is_empty(tet.temp[x,])){
       tet_hp_temp[[x]] &lt;- tibble(
-        area_inv = 0,
         Binomial = tet.temp[x,]$Binomial,
+        hp = 0,
         Model = tet.temp[x,]$Model,
         Year = tet.temp[x,]$Year,
         Dispersal = tet.temp[x,]$Dispersal
       )
-    else
-      
-      if (is.null(st_as_sf(
-        stars::st_as_stars(mask(
-          hp.temp &gt;= 100, as(tet.temp[x,], &quot;Spatial&quot;)
-        )),
-        as_points = FALSE,
-        merge = TRUE
-      )))
+    } else {
+      if (
+        nrow(st_as_sf(
+          stars::st_as_stars(mask(
+            hp.temp &gt;= 100, as(tet.temp[x,], &quot;Spatial&quot;)
+          )),
+          as_points = FALSE,
+          merge = TRUE
+        )) == 0
+      ){
         tet_hp_temp[[x]] &lt;- tibble(
-          hp = 0,
           Binomial = tet.temp[x,]$Binomial,
+          hp = 0,
           Model = tet.temp[x,]$Model,
           Year = tet.temp[x,]$Year,
           Dispersal = tet.temp[x,]$Dispersal
         )
-      else
+      } else {
         tet_hp_temp[[x]] &lt;-
           st_as_sf(stars::st_as_stars(mask(
             hp.temp &gt;= 100, as(tet.temp[x,], &quot;Spatial&quot;)
@@ -1417,14 +1446,16 @@ for (i in 1:8) {
             &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
           ) %&gt;%
           mutate(
-            hp = as.numeric(units::set_units(st_area(geometry), &quot;km2&quot;)),
             Binomial = tet.temp[x,]$Binomial,
+            hp = 0,
             Model = tet.temp[x,]$Model,
             Year = tet.temp[x,]$Year,
-            Dispersal= tet.temp[x,]$Dispersal
+            Dispersal = tet.temp[x,]$Dispersal
           ) %&gt;%
           as_tibble() %&gt;%
-          dplyr::select(Binomial, hp, Model, Year, Dispersal)
+          dplyr::select(Binomial, hp, Model, Year, Dispersal) 
+      }
+    }
   }
   
   tet_hp_future[[i]] &lt;- bind_rows(tet_hp_temp)
