@@ -394,8 +394,8 @@ species.</p></li>
 preparation steps. These are not available in the data repository, and
 can be sourced directly using the citations provided in the
 text.</p></li>
-<li><p>SDM - contains all of the environmental layers used in the SDM.
-These are generated in the SDM chunk.</p></li>
+<li><p>SDM - contains all of the environmental layers used in the
+SDM.</p></li>
 </ol>
 <ol start="2" style="list-style-type: decimal">
 <li>output - this folder contains all of the output generated during the
@@ -403,12 +403,8 @@ analyses. This includes summary tables, plots, rasters, and shapefiles.
 It also contains the following sub-folders:</li>
 </ol>
 <ol style="list-style-type: lower-alpha">
-<li><p>AA - contains the output from the Automated Assessment procedure.
-Subdivided into one folder for the results of the full tetrapod
-modelling scheme (tetrapods), four folders for the results of the
-class-specific modelling scheme (amphibians, birds, mammals, reptiles),
-and one folder for the results of analyses done on the AA output for the
-class-specific scheme (combined).</p></li>
+<li><p>AA - contains the output from the Automated Assessment procedure,
+including results of analyses done on the AA output.</p></li>
 <li><p>SDM - contains the output from the Species Distribution
 Modelling. Subdivided into one folder with plots of individual response
 curves per species (Response Curves), one folder for SDMs on trained and
@@ -443,11 +439,11 @@ chunks.</li>
 <h3>Data Preparation - Step 1</h3>
 <p>The first step is data preparation.<br />
 The raw distribution data are sourced directly from the IUCN (mammals
-and amphibians), BirdLife (birds), and the GARD Intiaitive
+and amphibians), BirdLife (birds), and the GARD Initiative
 (reptiles).<br />
 The code in this chunk filters the raw shapefiles to only include native
 Australian species, downloads missing IUCN Red List Assessments,
-downloads occurence data from ALA, and downloads and prepares
+downloads occurrence data from ALA, and downloads and prepares
 environmental predictors. Please note that to run this code you will
 require an API token for the IUCN Red List (<a href="https://apiv3.iucnredlist.org/api/v3/token" class="uri">https://apiv3.iucnredlist.org/api/v3/token</a>), and an
 email associated with a registered account in Atlas of Living Australia
@@ -872,10 +868,9 @@ write_rds(oz_points %&gt;% filter(class == &quot;Amphibian&quot;), &quot;data/am
 approach implemented through <code>biomod2</code>. We have run into some
 issues running these on RStudio with R v4.2 - if this happens, the
 scripts can be run directly through R without using RStudio.<br />
-An important thing to note is that we used a slightly older version of
-<code>biomod2</code> (4.2-4) - these scripts will not work with
-<code>biomod2</code> version 4.2-5 or later because of changes made to
-how modelling options and tuning are defined!</p>
+These scripts will only run on recent versions of <code>biomod2</code>
+(&gt;= 4.2-5) - these scripts will not work with older versions because
+of changes made to how modelling options and tuning are defined!</p>
 <pre class="r"><code># install.packages(&quot;ENMeval&quot;)
 # install.packages(&quot;dismo&quot;)
 # install.packages(&quot;biomod2&quot;)
@@ -905,8 +900,8 @@ the automated assessment procedure.<br />
 The next chunk of code will first source a script that reruns everything
 we have done so far but for invasive species in Australia - this is
 important as overlap with invasive species ranges will be one of our
-predictors. As before, your email address is provided to source data
-from ALA.<br />
+predictors. As before, a registered email address needs to be provided
+to source data from ALA.<br />
 The chunk then runs code which sources the raw human population density
 and land use data for different Shared Socioeconomic Pathways (SSPs) and
 Global Circulation Models (GCMs) and overlaps these with current and
@@ -4109,16 +4104,14 @@ ggsave(&quot;output/PA_overlap.pdf&quot;, width = 12, height = 6, scale = .8)</c
 up Figures S1-S4 and S7-S12. These include several sensitivity analyses,
 but mostly just more visualisations of data and trends.</p>
 <pre class="r"><code># plot distribution of AUC values
-tet_summary &lt;- read_csv(&quot;output/SDM/tet_summary.csv&quot;) %&gt;% select(1:5, 17) %&gt;% left_join(tet_iucn %&gt;% select(Binomial, Class) %&gt;% unique()) %&gt;% mutate(AUC = rowMeans(select(., 1:5))) %&gt;% drop_na(Class)
+tet_summary &lt;- read_csv(&quot;output/SDM/tet_summary.csv&quot;) %&gt;% left_join(tet_iucn %&gt;% select(Binomial, Class) %&gt;% unique()) %&gt;% drop_na(Class)
 
 tet_summary %&gt;%
-  filter (AUC &gt; 0.5) %&gt;%
   ggplot(aes(x = AUC)) +
   geom_density(aes(fill = Class), alpha = .8) +
   geom_vline(
     aes(xintercept = mean_AUC, colour = Class),
     data = tet_summary %&gt;%
-      filter (AUC &gt; 0.5) %&gt;%
       group_by(Class) %&gt;%
       summarise(mean_AUC = mean(AUC)),
     linetype = &quot;dashed&quot;,

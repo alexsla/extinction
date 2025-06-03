@@ -30,11 +30,11 @@ b. invasive - contains the above subfolder but only for the invasive species.
 
 c. RAW - contains all raw data used in the subsequent data preparation steps. These are not available in the data repository, and can be sourced directly using the citations provided in the text.
 
-d. SDM - contains all of the environmental layers used in the SDM. These are generated in the SDM chunk.
+d. SDM - contains all of the environmental layers used in the SDM.
 
 2. output - this folder contains all of the output generated during the analyses. This includes summary tables, plots, rasters, and shapefiles. It also contains the following sub-folders:
 
-a. AA - contains the output from the Automated Assessment procedure. Subdivided into one folder for the results of the full tetrapod modelling scheme (tetrapods), four folders for the results of the class-specific modelling scheme (amphibians, birds, mammals, reptiles), and one folder for the results of analyses done on the AA output for the class-specific scheme (combined).
+a. AA - contains the output from the Automated Assessment procedure, including results of analyses done on the AA output.
 
 b. SDM - contains the output from the Species Distribution Modelling. Subdivided into one folder with plots of individual response curves per species (Response Curves), one folder for SDMs on trained and projected to current climatic conditions (Current), and one folder for SDMs projected to future climatic conditions (Future). Each of the latter two contains three sub-folders:
 
@@ -51,8 +51,8 @@ iii) Shapefiles - contains individual shapefiles of the presence-absence based o
 ### Data Preparation - Step 1
 
 The first step is data preparation.\
-The raw distribution data are sourced directly from the IUCN (mammals and amphibians), BirdLife (birds), and the GARD Intiaitive (reptiles).\
-The code in this chunk filters the raw shapefiles to only include native Australian species, downloads missing IUCN Red List Assessments, downloads occurence data from ALA, and downloads and prepares environmental predictors. Please note that to run this code you will require an API token for the IUCN Red List (https://apiv3.iucnredlist.org/api/v3/token), and an email associated with a registered account in Atlas of Living Australia (https://auth.ala.org.au/userdetails/registration/createAccount).
+The raw distribution data are sourced directly from the IUCN (mammals and amphibians), BirdLife (birds), and the GARD Initiative (reptiles).\
+The code in this chunk filters the raw shapefiles to only include native Australian species, downloads missing IUCN Red List Assessments, downloads occurrence data from ALA, and downloads and prepares environmental predictors. Please note that to run this code you will require an API token for the IUCN Red List (https://apiv3.iucnredlist.org/api/v3/token), and an email associated with a registered account in Atlas of Living Australia (https://auth.ala.org.au/userdetails/registration/createAccount).
 
 ```{r data preparation 1, echo=TRUE, eval=FALSE}
 library(tidyverse) # install.packages("tidyverse")
@@ -473,7 +473,7 @@ write_rds(oz_points %>% filter(class == "Amphibian"), "data/amph_points.RDS")
 ### Species Distribution Modelling
 
 Next we run species distribution models (SDMs). We use an ensemble approach implemented through `biomod2`. We have run into some issues running these on RStudio with R v4.2 - if this happens, the scripts can be run directly through R without using RStudio.\
-An important thing to note is that we used a slightly older version of `biomod2` (4.2-4) - these scripts will not work with `biomod2` version 4.2-5 or later because of changes made to how modelling options and tuning are defined!
+These scripts will only run on recent versions of `biomod2` (>= 4.2-5) - these scripts will not work with older versions because of changes made to how modelling options and tuning are defined!
 
 ```{r sdm, echo=TRUE, eval=FALSE}
 # install.packages("ENMeval")
@@ -501,7 +501,7 @@ bind_rows(
 ### Data Perparation - Step 2
 
 Now that we have generated SDMs for all species and predicted future ranges, we can calculate the predictor variables which will be used for the automated assessment procedure.\
-The next chunk of code will first source a script that reruns everything we have done so far but for invasive species in Australia - this is important as overlap with invasive species ranges will be one of our predictors. As before, your email address is provided to source data from ALA.\
+The next chunk of code will first source a script that reruns everything we have done so far but for invasive species in Australia - this is important as overlap with invasive species ranges will be one of our predictors. As before, a registered email address needs to be provided to source data from ALA.\
 The chunk then runs code which sources the raw human population density and land use data for different Shared Socioeconomic Pathways (SSPs) and Global Circulation Models (GCMs) and overlaps these with current and predicted future ranges to calculate degrees of overlap for each species in the dataset.
 
 ```{r data preparation 2, echo=TRUE, eval=FALSE}
@@ -3687,16 +3687,14 @@ Finally, we have a code chunk that produces all of the plots making up Figures S
 
 ```{r supplementary, echo=TRUE, eval=FALSE}
 # plot distribution of AUC values
-tet_summary <- read_csv("output/SDM/tet_summary.csv") %>% select(1:5, 17) %>% left_join(tet_iucn %>% select(Binomial, Class) %>% unique()) %>% mutate(AUC = rowMeans(select(., 1:5))) %>% drop_na(Class)
+tet_summary <- read_csv("output/SDM/tet_summary.csv") %>% left_join(tet_iucn %>% select(Binomial, Class) %>% unique()) %>% drop_na(Class)
 
 tet_summary %>%
-  filter (AUC > 0.5) %>%
   ggplot(aes(x = AUC)) +
   geom_density(aes(fill = Class), alpha = .8) +
   geom_vline(
     aes(xintercept = mean_AUC, colour = Class),
     data = tet_summary %>%
-      filter (AUC > 0.5) %>%
       group_by(Class) %>%
       summarise(mean_AUC = mean(AUC)),
     linetype = "dashed",
