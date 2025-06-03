@@ -478,7 +478,11 @@ An important thing to note is that we used a slightly older version of `biomod2`
 ```{r sdm, echo=TRUE, eval=FALSE}
 # install.packages("ENMeval")
 # install.packages("dismo")
-# install.packages("terra")
+# install.packages("biomod2")
+# install.packages("blockCV")
+# install.packages("parallel")
+# install.packages("pbapply")
+# install.packages("doSNOW")
 
 source("scripts/SDM_amph.R")
 source("scripts/SDM_bird.R")
