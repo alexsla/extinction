@@ -2,7 +2,7 @@
 title: "Over-the-horizon extinction risk analyses for Australian tetrapods"
 author:
  - Alex Slavenko^[alex.slavenko1@gmail.com]
-date: '2025-01-23'
+date: '2025-06-03'
 output: html_document
 ---
 
@@ -60,10 +60,9 @@ The code in this chunk filters the raw shapefiles to only include native Austral
 library(tidyverse) # install.packages("tidyverse")
 library(sf) # install.packages("sf")
 library(rnaturalearth) # install.packages("rnaturalearth")
-library(raster) # install.packages("raster")
+library(terra) # install.packages("terra")
 library(galah) # install.packages("galah")
 library(taxize) # install.packages("taxize")
-library(slga) # install.packages("slga")
 library(foreach) # install.packages("foreach")
 library(doParallel) # install.packages("doParallel")
 
@@ -87,6 +86,13 @@ bird_shp <- readRDS("data/RAW/BirdMaps_JetzNames_filtered.rds") %>%
       Jetz_name == "Hirundo nigricans" ~ "Petrochelidon nigricans",
       Jetz_name == "Ixobrychus minutus" ~ "Ixobrychus dubius",
       Jetz_name == "Limicola falcinellus" ~ "Calidris flacinellus",
+      Jetz_name == "Tadorna radjah" ~ "Radjah radjah",
+      Jetz_name == "Sterna nereis" ~ "Sternula nereis",
+      Jetz_name == "Monarcha trivirgatus" ~ "Symposiachrus trivirgatus",
+      Jetz_name == "Megalurus timoriensis" ~ "Cincloramphus timoriensis",
+      Jetz_name == "Manucodia keraudrenii" ~ "Phonygammus keraudrenii",
+      Jetz_name == "Hirundo daurica" ~ "Cecropis daurica",
+      Jetz_name == "Alcedo pusilla" ~ "Ceyx pusillus",
       TRUE ~ Jetz_name
     )
   ) # make some fixes to taxonomy
@@ -122,7 +128,11 @@ mam_dist <- mam_shp[sel_logical,] %>%
   group_by(binomial, category) %>%
   summarise() %>%
   mutate(binomial = str_replace(binomial, " ", "_")) %>%
-  rename(Binomial = binomial)
+  rename(Binomial = binomial) %>%
+  # fix to taxonomy and distribution of Dobsonia moluccensis
+  filter(!Binomial == "Dobsonia_magna") %>%
+  mutate(Binomial = case_when(Binomial == "Dobsonia_moluccensis" ~ "Dobsonia_magna",
+                              T ~ Binomial))
 
 # generate a vector of polygons that intersect Australia
 sel_oz = st_intersects(x = bird_shp, y = oz_map)
@@ -136,7 +146,8 @@ bird_dist <- bird_shp[sel_logical,] %>%
   group_by(Jetz_name) %>%
   summarise() %>%
   mutate(Jetz_name = str_replace(Jetz_name, " ", "_")) %>%
-  rename(Binomial = Jetz_name)
+  rename(Binomial = Jetz_name) %>%
+  filter(!Binomial %in% c("Dacelo_tyro", "Elanus_caeruleus", "Hieraaetus_weiskei", "Malurus_cyanocephalus", "Oceanites_maorianus", "Oedistoma_pygmaeum", "Sipodotus_wallacii")) # drop some species that do not actually occur in Australia
 
 # generate a vector of polygons that intersect Australia
 sel_oz = st_intersects(x = rep_shp, y = oz_map)
@@ -217,6 +228,105 @@ write_rds(bird_dist, "data/bird_dist.rds")
 write_rds(rep_dist, "data/rep_dist.rds")
 write_rds(amph_dist, "data/amph_dist.rds")
 
+## generate layers of environmental predictors for SDMs
+# generate vector of current WorldClim2 layers
+wc_2 <- dir("data/RAW/WC2/25m", full.names = T)
+
+# import and stack rasters
+currentEnv <- rast(wc_2)
+
+# clip rasters to Australia
+currentEnv <- crop(currentEnv, vect(oz_map))
+currentEnv <- mask(currentEnv, vect(oz_map))
+
+# select variables to include in SDM as predictors
+currentEnv <- currentEnv[[c(1, 14, 2, 3, 4, 7, 8, 9, 20)]]
+
+# import soil layers
+soils <- rast(dir("data/RAW/soils/", full.names = T))
+
+# resample soils to be in the same extent and resolution as other layers (aggregating into lower resolution by avergaing cell values)
+soils <-
+  resample(soils, currentEnv[[1]], method = "bilinear")
+
+# add Australian soil layers
+currentEnv <- c(currentEnv, soils)
+names(currentEnv) <-
+  c(
+    "bio1",
+    "bio4",
+    "bio10",
+    "bio11",
+    "bio12",
+    "bio15",
+    "bio16",
+    "bio17",
+    "elev",
+    "AWC",
+    "BDW",
+    "CLY",
+    "pHc",
+    "SLT",
+    "SND",
+    "SOC"
+  )
+
+# export raster stack for SDM
+writeRaster(
+  currentEnv,
+  filename = "data/SDM/Current",
+  format = "GTiff",
+  overwrite = T
+)
+
+# generate vector of future WorldClim2 layers
+future <- dir("data/RAW/WC2/HadGEM3-GC31-LL/", full.names = T)
+
+# generate raster stacks for SDMs
+for (i in 1:length(future)) {
+  # import and stack future layers (along with elevation layer from current) and select variables
+  futureEnv <-
+    c(rast(future[[i]]), rast(wc_2[[20]]))[[c(1, 4, 10, 11, 12, 15, 16, 17, 20)]]
+  
+  # clip rasters to Australia
+  futureEnv <- crop(futureEnv, vect(oz_map))
+  futureEnv <- mask(futureEnv, vect(oz_map))
+  
+  # add soil layer
+  futureEnv <- c(futureEnv, soils)
+  names(futureEnv) <-
+    c(
+      "bio1",
+      "bio4",
+      "bio10",
+      "bio11",
+      "bio12",
+      "bio15",
+      "bio16",
+      "bio17",
+      "elev",
+      "AWC",
+      "BDW",
+      "CLY",
+      "pHc",
+      "SLT",
+      "SND",
+      "SOC"
+    )
+  
+  # export raster stack for SDM
+  writeRaster(
+    futureEnv,
+    filename = paste(
+      "data/SDM/",
+      str_match(future[[i]], "bioc_\\s*(.*?)\\s*.tif")[2],
+      sep = ""
+    ),
+    format = "GTiff",
+    overwrite = T
+  )
+}
+
 ## create dataset of occurrence points in Australia
 # generate vector of taxa
 oz_tax <-
@@ -228,14 +338,21 @@ oz_tax <-
 # download occurrences per species
 cores = detectCores()
 cl <-
-  makeCluster(cores[1] - 1) ## set to use all but one thread - replace if necessary
+  makeCluster(cores[1] - 2) ## set to use all but one thread - replace if necessary
 registerDoParallel(cl)
 
+tibble(Binomial = character(),
+       n_pre = numeric(),
+       n_post = numeric(),
+       date = character(),
+       doi = character()) %>%
+  write_csv("data/sample_sizes.csv")
+
 foreach(i = 1:length(oz_tax),
-        .packages = c("tidyverse", "galah", "sf")) %dopar% {
+        .packages = c("tidyverse", "galah", "sf", "dismo", "terra")) %dopar% {
           sf_use_s2(FALSE)
           # test if already downloaded (if so, skip to next iteration)
-          if (!oz_tax[[i]] %in% str_remove(dir("data/citations/"), ".txt")) {
+          if (!oz_tax[[i]] %in% str_remove(dir("data/occurrences/"), ".csv")) {
             # set email registered to ALA
             galah_config(email = "YOUR_EMAIL_HERE") ## replace with your registered email in ALA
             
@@ -275,21 +392,59 @@ foreach(i = 1:length(oz_tax),
               
               if (dim(result_points)[1] > 0) {
                 # if there are occurrence points left after filtering
+                # import current environmental layers
+                currentEnv <- rast("data/SDM/Current.tif")
+                names(currentEnv) <-
+                  c(
+                    "bio1",
+                    "bio4",
+                    "bio10",
+                    "bio11",
+                    "bio12",
+                    "bio15",
+                    "bio16",
+                    "bio17",
+                    "elev",
+                    "AWC",
+                    "BDW",
+                    "CLY",
+                    "pHc",
+                    "SLT",
+                    "SND",
+                    "SOC"
+                  )
+                
+                # perform spatial thinning on points
+                set.seed(42)
+                
+                if(dim(result_points)[1] > 1){
+                  points_occ <-
+                    dismo::gridSample(as.matrix(st_coordinates(result_points)), currentEnv, n = 1)
+                } else {
+                  points_occ <- st_coordinates(result_points)
+                }
+                
                 # convert to tibble
                 result_points <-
-                  bind_cols(as_tibble(result_points),
-                            as_tibble(st_coordinates(result_points))) %>%
+                  as_tibble(points_occ) %>%
+                  mutate(Binomial = oz_tax[[i]]) %>%
                   rename(decimalLongitude = X,
-                         decimalLatitude = Y) %>%
-                  dplyr::select(c(names(result), decimalLatitude, decimalLongitude),-geometry)
+                         decimalLatitude = Y)
+                
+                citation_text <- atlas_citation(result)
+                doi <- str_extract(citation_text, "https://doi\\.org/[0-9a-zA-Z./\\-]+")
+                
+                # save sample sizes
+                tibble(Binomial = oz_tax[[i]],
+                       n_pre = nrow(result),
+                       n_post = nrow(result_points),
+                       date = as.character(today()),
+                       doi = doi) %>%
+                  write_csv("data/sample_sizes.csv", append = T)
                 
                 # export points
                 write_csv(result_points,
                           paste("data/occurrences/", oz_tax[[i]], ".csv", sep = ""))
-                
-                # export citation for occurrences
-                write_file(atlas_citation(result),
-                           paste("data/citations/", oz_tax[[i]], ".txt", sep = ""))
               }
             }
           }
@@ -307,134 +462,14 @@ oz_points <-
       Binomial %in% rep_dist$Binomial ~ "Reptile",
       Binomial %in% amph_dist$Binomial ~ "Amphibian"
     )
-  )
+  ) %>%
+  filter(decimalLongitude < 154) # drop Lord Howe Island
 
 # export points
 write_rds(oz_points %>% filter(class == "Mammal"), "data/mam_points.RDS")
 write_rds(oz_points %>% filter(class == "Bird"), "data/bird_points.RDS")
 write_rds(oz_points %>% filter(class == "Reptile"), "data/rep_points.RDS")
-write_rds(oz_points %>% filter(class == "Amphibian"),
-          "data/amph_points.RDS")
-
-# export citations
-oz_citations <-
-  tibble(Binomial = str_remove(dir("data/citations/"), ".txt"),
-         citation = sapply(dir("data/citations/", full.names = T), function(x) paste(readLines(x), collapse = "; "))) %>%
-  mutate(
-    class = case_when(
-      Binomial %in% mam_dist$Binomial ~ "Mammal",
-      Binomial %in% bird_dist$Binomial ~ "Bird",
-      Binomial %in% rep_dist$Binomial ~ "Reptile",
-      Binomial %in% amph_dist$Binomial ~ "Amphibian"
-    )
-  ) %>%
-  mutate(Binomial = str_replace(Binomial, "_", " "))
-write_csv(oz_citations, "data/citations.csv")
-
-## generate layers of environmental predictors for SDMs
-# generate vector of current WorldClim2 layers
-wc_2 <- dir("data/RAW/WC2/25m", full.names = T)
-
-# import and stack rasters
-currentEnv <- lapply(wc_2, function(x)
-  raster(x))
-currentEnv <- stack(currentEnv)
-
-# clip rasters to Australia
-currentEnv <- crop(currentEnv, extent(oz_map))
-currentEnv <- mask(currentEnv, oz_map)
-
-# select variables to include in SDM as predictors
-currentEnv <- currentEnv[[c(1, 14, 2, 3, 4, 7, 8, 9, 20)]]
-
-# import soil layers
-soils <- lapply(dir("data/RAW/soils/", full.names = T), raster)
-
-# resample soils to be in the same extent and resolution as other layers (aggregating into lower resolution by avergaing cell values)
-soils <-
-  lapply(soils, function(x)
-    resample(x, currentEnv, method = "bilinear"))
-soils <- stack(soils)
-
-# add Australian soil layers
-currentEnv <- stack(currentEnv, soils)
-names(currentEnv) <-
-  c(
-    "bio1",
-    "bio4",
-    "bio10",
-    "bio11",
-    "bio12",
-    "bio15",
-    "bio16",
-    "bio17",
-    "elev",
-    "AWC",
-    "BDW",
-    "CLY",
-    "pHc",
-    "SLT",
-    "SND",
-    "SOC"
-  )
-
-# export raster stack for SDM
-writeRaster(
-  currentEnv,
-  filename = "data/SDM/Current",
-  format = "GTiff",
-  overwrite = T
-)
-
-# generate vector of future WorldClim2 layers
-CNRM_ESM2_1 <- dir("data/RAW/WC2/CNRM-ESM2-1/", full.names = T)
-MICRO6 <- dir("data/RAW/WC2/MICRO6/", full.names = T)
-future <- c(CNRM_ESM2_1, MICRO6)
-
-# generate raster stacks for SDMs
-for (i in 1:length(future)) {
-  # import and stack future layers (along with elevation layer from current) and select variables
-  futureEnv <-
-    stack(future[[i]], wc_2[[20]])[[c(1, 4, 10, 11, 12, 15, 16, 17, 20)]]
-  
-  # clip rasters to Australia
-  futureEnv <- crop(futureEnv, extent(oz_map))
-  futureEnv <- mask(futureEnv, oz_map)
-  
-  # add soil layer
-  futureEnv <- stack(futureEnv, soils)
-  names(futureEnv) <-
-    c(
-      "bio1",
-      "bio4",
-      "bio10",
-      "bio11",
-      "bio12",
-      "bio15",
-      "bio16",
-      "bio17",
-      "elev",
-      "AWC",
-      "BDW",
-      "CLY",
-      "pHc",
-      "SLT",
-      "SND",
-      "SOC"
-    )
-  
-  # export raster stack for SDM
-  writeRaster(
-    futureEnv,
-    filename = paste(
-      "data/SDM/",
-      str_match(future[[i]], "bioc_\\s*(.*?)\\s*.tif")[2],
-      sep = ""
-    ),
-    format = "GTiff",
-    overwrite = T
-  )
-}
+write_rds(oz_points %>% filter(class == "Amphibian"), "data/amph_points.RDS")
 ```
 
 ### Species Distribution Modelling
@@ -468,6 +503,7 @@ The next chunk of code will first source a script that reruns everything we have
 The chunk then runs code which sources the raw human population density and land use data for different Shared Socioeconomic Pathways (SSPs) and Global Circulation Models (GCMs) and overlaps these with current and predicted future ranges to calculate degrees of overlap for each species in the dataset.
 
 ```{r data preparation 2, echo=TRUE, eval=FALSE}
+library(raster) # install.packages("raster")
 library(stars) # install.packages("stars")
 library(ncdf4) # install.packages("ncdf4")
 

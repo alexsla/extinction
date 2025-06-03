@@ -11,7 +11,7 @@
 
 <meta name="author" content="Alex Slavenko" />
 
-<meta name="date" content="2025-01-23" />
+<meta name="date" content="2025-06-03" />
 
 <title>Over-the-horizon extinction risk analyses for Australian tetrapods</title>
 
@@ -353,7 +353,7 @@ display: none;
 <h1 class="title toc-ignore">Over-the-horizon extinction risk analyses
 for Australian tetrapods</h1>
 <h4 class="author">Alex Slavenko<a href="#fn1" class="footnote-ref" id="fnref1"><sup>1</sup></a></h4>
-<h4 class="date">2025-01-23</h4>
+<h4 class="date">2025-06-03</h4>
 
 </div>
 
@@ -454,10 +454,9 @@ email associated with a registered account in Atlas of Living Australia
 <pre class="r"><code>library(tidyverse) # install.packages(&quot;tidyverse&quot;)
 library(sf) # install.packages(&quot;sf&quot;)
 library(rnaturalearth) # install.packages(&quot;rnaturalearth&quot;)
-library(raster) # install.packages(&quot;raster&quot;)
+library(terra) # install.packages(&quot;terra&quot;)
 library(galah) # install.packages(&quot;galah&quot;)
 library(taxize) # install.packages(&quot;taxize&quot;)
-library(slga) # install.packages(&quot;slga&quot;)
 library(foreach) # install.packages(&quot;foreach&quot;)
 library(doParallel) # install.packages(&quot;doParallel&quot;)
 
@@ -481,6 +480,13 @@ bird_shp &lt;- readRDS(&quot;data/RAW/BirdMaps_JetzNames_filtered.rds&quot;) %&g
       Jetz_name == &quot;Hirundo nigricans&quot; ~ &quot;Petrochelidon nigricans&quot;,
       Jetz_name == &quot;Ixobrychus minutus&quot; ~ &quot;Ixobrychus dubius&quot;,
       Jetz_name == &quot;Limicola falcinellus&quot; ~ &quot;Calidris flacinellus&quot;,
+      Jetz_name == &quot;Tadorna radjah&quot; ~ &quot;Radjah radjah&quot;,
+      Jetz_name == &quot;Sterna nereis&quot; ~ &quot;Sternula nereis&quot;,
+      Jetz_name == &quot;Monarcha trivirgatus&quot; ~ &quot;Symposiachrus trivirgatus&quot;,
+      Jetz_name == &quot;Megalurus timoriensis&quot; ~ &quot;Cincloramphus timoriensis&quot;,
+      Jetz_name == &quot;Manucodia keraudrenii&quot; ~ &quot;Phonygammus keraudrenii&quot;,
+      Jetz_name == &quot;Hirundo daurica&quot; ~ &quot;Cecropis daurica&quot;,
+      Jetz_name == &quot;Alcedo pusilla&quot; ~ &quot;Ceyx pusillus&quot;,
       TRUE ~ Jetz_name
     )
   ) # make some fixes to taxonomy
@@ -516,7 +522,11 @@ mam_dist &lt;- mam_shp[sel_logical,] %&gt;%
   group_by(binomial, category) %&gt;%
   summarise() %&gt;%
   mutate(binomial = str_replace(binomial, &quot; &quot;, &quot;_&quot;)) %&gt;%
-  rename(Binomial = binomial)
+  rename(Binomial = binomial) %&gt;%
+  # fix to taxonomy and distribution of Dobsonia moluccensis
+  filter(!Binomial == &quot;Dobsonia_magna&quot;) %&gt;%
+  mutate(Binomial = case_when(Binomial == &quot;Dobsonia_moluccensis&quot; ~ &quot;Dobsonia_magna&quot;,
+                              T ~ Binomial))
 
 # generate a vector of polygons that intersect Australia
 sel_oz = st_intersects(x = bird_shp, y = oz_map)
@@ -530,7 +540,8 @@ bird_dist &lt;- bird_shp[sel_logical,] %&gt;%
   group_by(Jetz_name) %&gt;%
   summarise() %&gt;%
   mutate(Jetz_name = str_replace(Jetz_name, &quot; &quot;, &quot;_&quot;)) %&gt;%
-  rename(Binomial = Jetz_name)
+  rename(Binomial = Jetz_name) %&gt;%
+  filter(!Binomial %in% c(&quot;Dacelo_tyro&quot;, &quot;Elanus_caeruleus&quot;, &quot;Hieraaetus_weiskei&quot;, &quot;Malurus_cyanocephalus&quot;, &quot;Oceanites_maorianus&quot;, &quot;Oedistoma_pygmaeum&quot;, &quot;Sipodotus_wallacii&quot;)) # drop some species that do not actually occur in Australia
 
 # generate a vector of polygons that intersect Australia
 sel_oz = st_intersects(x = rep_shp, y = oz_map)
@@ -611,6 +622,105 @@ write_rds(bird_dist, &quot;data/bird_dist.rds&quot;)
 write_rds(rep_dist, &quot;data/rep_dist.rds&quot;)
 write_rds(amph_dist, &quot;data/amph_dist.rds&quot;)
 
+## generate layers of environmental predictors for SDMs
+# generate vector of current WorldClim2 layers
+wc_2 &lt;- dir(&quot;data/RAW/WC2/25m&quot;, full.names = T)
+
+# import and stack rasters
+currentEnv &lt;- rast(wc_2)
+
+# clip rasters to Australia
+currentEnv &lt;- crop(currentEnv, vect(oz_map))
+currentEnv &lt;- mask(currentEnv, vect(oz_map))
+
+# select variables to include in SDM as predictors
+currentEnv &lt;- currentEnv[[c(1, 14, 2, 3, 4, 7, 8, 9, 20)]]
+
+# import soil layers
+soils &lt;- rast(dir(&quot;data/RAW/soils/&quot;, full.names = T))
+
+# resample soils to be in the same extent and resolution as other layers (aggregating into lower resolution by avergaing cell values)
+soils &lt;-
+  resample(soils, currentEnv[[1]], method = &quot;bilinear&quot;)
+
+# add Australian soil layers
+currentEnv &lt;- c(currentEnv, soils)
+names(currentEnv) &lt;-
+  c(
+    &quot;bio1&quot;,
+    &quot;bio4&quot;,
+    &quot;bio10&quot;,
+    &quot;bio11&quot;,
+    &quot;bio12&quot;,
+    &quot;bio15&quot;,
+    &quot;bio16&quot;,
+    &quot;bio17&quot;,
+    &quot;elev&quot;,
+    &quot;AWC&quot;,
+    &quot;BDW&quot;,
+    &quot;CLY&quot;,
+    &quot;pHc&quot;,
+    &quot;SLT&quot;,
+    &quot;SND&quot;,
+    &quot;SOC&quot;
+  )
+
+# export raster stack for SDM
+writeRaster(
+  currentEnv,
+  filename = &quot;data/SDM/Current&quot;,
+  format = &quot;GTiff&quot;,
+  overwrite = T
+)
+
+# generate vector of future WorldClim2 layers
+future &lt;- dir(&quot;data/RAW/WC2/HadGEM3-GC31-LL/&quot;, full.names = T)
+
+# generate raster stacks for SDMs
+for (i in 1:length(future)) {
+  # import and stack future layers (along with elevation layer from current) and select variables
+  futureEnv &lt;-
+    c(rast(future[[i]]), rast(wc_2[[20]]))[[c(1, 4, 10, 11, 12, 15, 16, 17, 20)]]
+  
+  # clip rasters to Australia
+  futureEnv &lt;- crop(futureEnv, vect(oz_map))
+  futureEnv &lt;- mask(futureEnv, vect(oz_map))
+  
+  # add soil layer
+  futureEnv &lt;- c(futureEnv, soils)
+  names(futureEnv) &lt;-
+    c(
+      &quot;bio1&quot;,
+      &quot;bio4&quot;,
+      &quot;bio10&quot;,
+      &quot;bio11&quot;,
+      &quot;bio12&quot;,
+      &quot;bio15&quot;,
+      &quot;bio16&quot;,
+      &quot;bio17&quot;,
+      &quot;elev&quot;,
+      &quot;AWC&quot;,
+      &quot;BDW&quot;,
+      &quot;CLY&quot;,
+      &quot;pHc&quot;,
+      &quot;SLT&quot;,
+      &quot;SND&quot;,
+      &quot;SOC&quot;
+    )
+  
+  # export raster stack for SDM
+  writeRaster(
+    futureEnv,
+    filename = paste(
+      &quot;data/SDM/&quot;,
+      str_match(future[[i]], &quot;bioc_\\s*(.*?)\\s*.tif&quot;)[2],
+      sep = &quot;&quot;
+    ),
+    format = &quot;GTiff&quot;,
+    overwrite = T
+  )
+}
+
 ## create dataset of occurrence points in Australia
 # generate vector of taxa
 oz_tax &lt;-
@@ -622,14 +732,21 @@ oz_tax &lt;-
 # download occurrences per species
 cores = detectCores()
 cl &lt;-
-  makeCluster(cores[1] - 1) ## set to use all but one thread - replace if necessary
+  makeCluster(cores[1] - 2) ## set to use all but one thread - replace if necessary
 registerDoParallel(cl)
 
+tibble(Binomial = character(),
+       n_pre = numeric(),
+       n_post = numeric(),
+       date = character(),
+       doi = character()) %&gt;%
+  write_csv(&quot;data/sample_sizes.csv&quot;)
+
 foreach(i = 1:length(oz_tax),
-        .packages = c(&quot;tidyverse&quot;, &quot;galah&quot;, &quot;sf&quot;)) %dopar% {
+        .packages = c(&quot;tidyverse&quot;, &quot;galah&quot;, &quot;sf&quot;, &quot;dismo&quot;, &quot;terra&quot;)) %dopar% {
           sf_use_s2(FALSE)
           # test if already downloaded (if so, skip to next iteration)
-          if (!oz_tax[[i]] %in% str_remove(dir(&quot;data/citations/&quot;), &quot;.txt&quot;)) {
+          if (!oz_tax[[i]] %in% str_remove(dir(&quot;data/occurrences/&quot;), &quot;.csv&quot;)) {
             # set email registered to ALA
             galah_config(email = &quot;YOUR_EMAIL_HERE&quot;) ## replace with your registered email in ALA
             
@@ -669,21 +786,59 @@ foreach(i = 1:length(oz_tax),
               
               if (dim(result_points)[1] &gt; 0) {
                 # if there are occurrence points left after filtering
+                # import current environmental layers
+                currentEnv &lt;- rast(&quot;data/SDM/Current.tif&quot;)
+                names(currentEnv) &lt;-
+                  c(
+                    &quot;bio1&quot;,
+                    &quot;bio4&quot;,
+                    &quot;bio10&quot;,
+                    &quot;bio11&quot;,
+                    &quot;bio12&quot;,
+                    &quot;bio15&quot;,
+                    &quot;bio16&quot;,
+                    &quot;bio17&quot;,
+                    &quot;elev&quot;,
+                    &quot;AWC&quot;,
+                    &quot;BDW&quot;,
+                    &quot;CLY&quot;,
+                    &quot;pHc&quot;,
+                    &quot;SLT&quot;,
+                    &quot;SND&quot;,
+                    &quot;SOC&quot;
+                  )
+                
+                # perform spatial thinning on points
+                set.seed(42)
+                
+                if(dim(result_points)[1] &gt; 1){
+                  points_occ &lt;-
+                    dismo::gridSample(as.matrix(st_coordinates(result_points)), currentEnv, n = 1)
+                } else {
+                  points_occ &lt;- st_coordinates(result_points)
+                }
+                
                 # convert to tibble
                 result_points &lt;-
-                  bind_cols(as_tibble(result_points),
-                            as_tibble(st_coordinates(result_points))) %&gt;%
+                  as_tibble(points_occ) %&gt;%
+                  mutate(Binomial = oz_tax[[i]]) %&gt;%
                   rename(decimalLongitude = X,
-                         decimalLatitude = Y) %&gt;%
-                  dplyr::select(c(names(result), decimalLatitude, decimalLongitude),-geometry)
+                         decimalLatitude = Y)
+                
+                citation_text &lt;- atlas_citation(result)
+                doi &lt;- str_extract(citation_text, &quot;https://doi\\.org/[0-9a-zA-Z./\\-]+&quot;)
+                
+                # save sample sizes
+                tibble(Binomial = oz_tax[[i]],
+                       n_pre = nrow(result),
+                       n_post = nrow(result_points),
+                       date = as.character(today()),
+                       doi = doi) %&gt;%
+                  write_csv(&quot;data/sample_sizes.csv&quot;, append = T)
                 
                 # export points
                 write_csv(result_points,
                           paste(&quot;data/occurrences/&quot;, oz_tax[[i]], &quot;.csv&quot;, sep = &quot;&quot;))
-                
-                # export citation for occurrences
-                write_file(atlas_citation(result),
-                           paste(&quot;data/citations/&quot;, oz_tax[[i]], &quot;.txt&quot;, sep = &quot;&quot;))
               }
             }
           }
@@ -701,134 +856,14 @@ oz_points &lt;-
       Binomial %in% rep_dist$Binomial ~ &quot;Reptile&quot;,
       Binomial %in% amph_dist$Binomial ~ &quot;Amphibian&quot;
     )
-  )
+  ) %&gt;%
+  filter(decimalLongitude &lt; 154) # drop Lord Howe Island
 
 # export points
 write_rds(oz_points %&gt;% filter(class == &quot;Mammal&quot;), &quot;data/mam_points.RDS&quot;)
 write_rds(oz_points %&gt;% filter(class == &quot;Bird&quot;), &quot;data/bird_points.RDS&quot;)
 write_rds(oz_points %&gt;% filter(class == &quot;Reptile&quot;), &quot;data/rep_points.RDS&quot;)
-write_rds(oz_points %&gt;% filter(class == &quot;Amphibian&quot;),
-          &quot;data/amph_points.RDS&quot;)
-
-# export citations
-oz_citations &lt;-
-  tibble(Binomial = str_remove(dir(&quot;data/citations/&quot;), &quot;.txt&quot;),
-         citation = sapply(dir(&quot;data/citations/&quot;, full.names = T), function(x) paste(readLines(x), collapse = &quot;; &quot;))) %&gt;%
-  mutate(
-    class = case_when(
-      Binomial %in% mam_dist$Binomial ~ &quot;Mammal&quot;,
-      Binomial %in% bird_dist$Binomial ~ &quot;Bird&quot;,
-      Binomial %in% rep_dist$Binomial ~ &quot;Reptile&quot;,
-      Binomial %in% amph_dist$Binomial ~ &quot;Amphibian&quot;
-    )
-  ) %&gt;%
-  mutate(Binomial = str_replace(Binomial, &quot;_&quot;, &quot; &quot;))
-write_csv(oz_citations, &quot;data/citations.csv&quot;)
-
-## generate layers of environmental predictors for SDMs
-# generate vector of current WorldClim2 layers
-wc_2 &lt;- dir(&quot;data/RAW/WC2/25m&quot;, full.names = T)
-
-# import and stack rasters
-currentEnv &lt;- lapply(wc_2, function(x)
-  raster(x))
-currentEnv &lt;- stack(currentEnv)
-
-# clip rasters to Australia
-currentEnv &lt;- crop(currentEnv, extent(oz_map))
-currentEnv &lt;- mask(currentEnv, oz_map)
-
-# select variables to include in SDM as predictors
-currentEnv &lt;- currentEnv[[c(1, 14, 2, 3, 4, 7, 8, 9, 20)]]
-
-# import soil layers
-soils &lt;- lapply(dir(&quot;data/RAW/soils/&quot;, full.names = T), raster)
-
-# resample soils to be in the same extent and resolution as other layers (aggregating into lower resolution by avergaing cell values)
-soils &lt;-
-  lapply(soils, function(x)
-    resample(x, currentEnv, method = &quot;bilinear&quot;))
-soils &lt;- stack(soils)
-
-# add Australian soil layers
-currentEnv &lt;- stack(currentEnv, soils)
-names(currentEnv) &lt;-
-  c(
-    &quot;bio1&quot;,
-    &quot;bio4&quot;,
-    &quot;bio10&quot;,
-    &quot;bio11&quot;,
-    &quot;bio12&quot;,
-    &quot;bio15&quot;,
-    &quot;bio16&quot;,
-    &quot;bio17&quot;,
-    &quot;elev&quot;,
-    &quot;AWC&quot;,
-    &quot;BDW&quot;,
-    &quot;CLY&quot;,
-    &quot;pHc&quot;,
-    &quot;SLT&quot;,
-    &quot;SND&quot;,
-    &quot;SOC&quot;
-  )
-
-# export raster stack for SDM
-writeRaster(
-  currentEnv,
-  filename = &quot;data/SDM/Current&quot;,
-  format = &quot;GTiff&quot;,
-  overwrite = T
-)
-
-# generate vector of future WorldClim2 layers
-CNRM_ESM2_1 &lt;- dir(&quot;data/RAW/WC2/CNRM-ESM2-1/&quot;, full.names = T)
-MICRO6 &lt;- dir(&quot;data/RAW/WC2/MICRO6/&quot;, full.names = T)
-future &lt;- c(CNRM_ESM2_1, MICRO6)
-
-# generate raster stacks for SDMs
-for (i in 1:length(future)) {
-  # import and stack future layers (along with elevation layer from current) and select variables
-  futureEnv &lt;-
-    stack(future[[i]], wc_2[[20]])[[c(1, 4, 10, 11, 12, 15, 16, 17, 20)]]
-  
-  # clip rasters to Australia
-  futureEnv &lt;- crop(futureEnv, extent(oz_map))
-  futureEnv &lt;- mask(futureEnv, oz_map)
-  
-  # add soil layer
-  futureEnv &lt;- stack(futureEnv, soils)
-  names(futureEnv) &lt;-
-    c(
-      &quot;bio1&quot;,
-      &quot;bio4&quot;,
-      &quot;bio10&quot;,
-      &quot;bio11&quot;,
-      &quot;bio12&quot;,
-      &quot;bio15&quot;,
-      &quot;bio16&quot;,
-      &quot;bio17&quot;,
-      &quot;elev&quot;,
-      &quot;AWC&quot;,
-      &quot;BDW&quot;,
-      &quot;CLY&quot;,
-      &quot;pHc&quot;,
-      &quot;SLT&quot;,
-      &quot;SND&quot;,
-      &quot;SOC&quot;
-    )
-  
-  # export raster stack for SDM
-  writeRaster(
-    futureEnv,
-    filename = paste(
-      &quot;data/SDM/&quot;,
-      str_match(future[[i]], &quot;bioc_\\s*(.*?)\\s*.tif&quot;)[2],
-      sep = &quot;&quot;
-    ),
-    format = &quot;GTiff&quot;,
-    overwrite = T
-  )
-}</code></pre>
+write_rds(oz_points %&gt;% filter(class == &quot;Amphibian&quot;), &quot;data/amph_points.RDS&quot;)</code></pre>
 </div>
 <div id="species-distribution-modelling" class="section level3">
 <h3>Species Distribution Modelling</h3>
@@ -872,7 +907,8 @@ and land use data for different Shared Socioeconomic Pathways (SSPs) and
 Global Circulation Models (GCMs) and overlaps these with current and
 predicted future ranges to calculate degrees of overlap for each species
 in the dataset.</p>
-<pre class="r"><code>library(stars) # install.packages(&quot;stars&quot;)
+<pre class="r"><code>library(raster) # install.packages(&quot;raster&quot;)
+library(stars) # install.packages(&quot;stars&quot;)
 library(ncdf4) # install.packages(&quot;ncdf4&quot;)
 
 source(&quot;scripts/invasive_species.R&quot;)

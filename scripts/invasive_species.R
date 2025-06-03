@@ -1,17 +1,15 @@
-options(java.parameters = "-Xmx8g")
-
 library(tidyverse)
 library(rnaturalearth)
 library(sf)
-library(raster)
+library(terra)
 library(biomod2)
+library(blockCV)
 library(parallel)
 library(pbapply)
 library(doSNOW)
 
-jar <-
-  paste(system.file(package = "dismo"), "/java/maxent.jar", sep = '')
-require(rJava)
+cores = detectCores()
+cl <- 8 ## set to use all but one thread - replace if necessary
 
 # create map of Australia
 oz_map <-
@@ -32,114 +30,119 @@ inv_tax <-
     "Oryctolagus cuniculus"
   )
 
-# download occurrences per species
-cl <- makeCluster(5)
-registerDoParallel(cl)
-
-foreach(i = 1:length(inv_tax),
-        .packages = c("tidyverse", "galah", "sf")) %dopar% {
-          # test if already downloaded (if so, skip to next iteration)
-          if (!inv_tax[[i]] %in% str_remove(dir("data/invasive/citations/"), ".txt")) {
-            # set email registered to ALA
-            galah_config(email = "YOUR_EMAIL_HERE")
-            
-            result <- tryCatch(
-              galah_call() |>
-                galah_identify(str_replace(inv_tax[[i]], "_", " ")) |>
-                galah_filter(profile = "ALA", year > 1990) |> # filter after 1990
-                galah_select(basisOfRecord, group = "basic") |>
-                atlas_occurrences(mint_doi = T),
-              error = function(e)
-                e
-            )
-            
-            if (inherits(result, "error")) {
-              result <- tryCatch(
-                galah_call() |>
-                  galah_identify(
-                    dplyr::filter(
-                      bind_rows(rep_synonym, bird_synonym),
-                      Binomial == str_replace(inv_tax[[i]], "_", " ")
-                    )$synonym
-                  ) |>
-                  galah_filter(
-                    profile = "ALA",
-                    year > 1990
-                  ) |>
-                  galah_select(basisOfRecord, group = "basic") |>
-                  atlas_occurrences(mint_doi = T),
-                error = function(e)
-                  e
-              )
-            }
-            
-            if (!inherits(result, "error")) {
-              # if there are occurrence points left after filtering
-              # convert to spatial object
-              result <-
-                st_as_sf(
-                  result %>% drop_na(decimalLatitude, decimalLongitude, scientificName),
-                  coords = c("decimalLongitude", "decimalLatitude"),
-                  crs = st_crs(oz_map)
-                )
-              
-              # filter out points which do not fall within Australia
-              result_points <- st_join(result, oz_map, join = st_within) %>%
-                dplyr::filter(!is.na(sovereignt))
-              
-              if (dim(result_points)[1] > 0) {
-                # if there are occurrence points left after filtering
-                # convert to tibble
-                result_points <-
-                  bind_cols(as_tibble(result_points),
-                            as_tibble(st_coordinates(result_points))) %>%
-                  rename(decimalLongitude = X,
-                         decimalLatitude = Y) %>%
-                  select(c(names(result), decimalLatitude, decimalLongitude),-geometry)
-                
-                # export points
-                write_csv(result_points,
-                  paste("data/invasive/occurrences/", inv_tax[[i]], ".csv", sep = ""))
-                
-                # export citation for occurrences
-                write_file(atlas_citation(result),
-                  paste("data/invasive/citations/", inv_tax[[i]], ".txt", sep = ""))
-              }
-            }
-          }
-        }
-stopCluster(cl)
-
-unregister_dopar <- function() {
-  env <- foreach:::.foreachGlobals
-  rm(list=ls(name=env), pos=env)
-}
-
-unregister_dopar() # clean up parallel computing
-
-# convert to single dataframe
-inv_points <-
-  bind_rows(lapply(dir("data/invasive/occurrences/"), function(x)
-    read_csv(paste("data/invasive/occurrences/", x, sep = "")) %>% mutate(Binomial = str_remove(x, ".csv"))))
-
-# export points
-write_rds(inv_points, "data/inv_points.RDS")
-
-# export citations
-inv_citations <-
-  tibble(Binomial = str_remove(dir("data/invasive/citations/"), ".txt"),
-         citation = sapply(dir("data/invasive/citations/", full.names = T), function(x) paste(readLines(x), collapse = "; ")))
-write_csv(inv_citations, "data/inv_citations.csv")
+# # download occurrences per species
+# cl <- makeCluster(5)
+# registerDoParallel(cl)
+# 
+# foreach(i = 1:length(inv_tax),
+#         .packages = c("tidyverse", "galah", "sf")) %dopar% {
+#           # test if already downloaded (if so, skip to next iteration)
+#           if (!inv_tax[[i]] %in% str_remove(dir("data/invasive/"), ".txt")) {
+#             # set email registered to ALA
+#             galah_config(email = "YOUR_EMAIL_HERE")
+# 
+#             result <- tryCatch(
+#               galah_call() |>
+#                 galah_identify(str_replace(inv_tax[[i]], "_", " ")) |>
+#                 galah_filter(profile = "CSDM") |>
+#                 galah_select(basisOfRecord, group = "basic") |>
+#                 atlas_occurrences(mint_doi = T),
+#               error = function(e)
+#                 e
+#             )
+# 
+#             if (!inherits(result, "error")) {
+#               # if there are occurrence points left after filtering
+#               # convert to spatial object
+#               result <-
+#                 st_as_sf(
+#                   result %>% drop_na(decimalLatitude, decimalLongitude, scientificName),
+#                   coords = c("decimalLongitude", "decimalLatitude"),
+#                   crs = st_crs(oz_map)
+#                 )
+# 
+#               # filter out points which do not fall within Australia
+#               result_points <- st_join(result, oz_map, join = st_within) %>%
+#                 dplyr::filter(!is.na(sovereignt))
+# 
+#               if (dim(result_points)[1] > 0) {
+#                 # if there are occurrence points left after filtering
+#                 # import current environmental layers
+#                 currentEnv <- rast("data/SDM/Current.tif")
+#                 names(currentEnv) <-
+#                   c(
+#                     "bio1",
+#                     "bio4",
+#                     "bio10",
+#                     "bio11",
+#                     "bio12",
+#                     "bio15",
+#                     "bio16",
+#                     "bio17",
+#                     "elev",
+#                     "AWC",
+#                     "BDW",
+#                     "CLY",
+#                     "pHc",
+#                     "SLT",
+#                     "SND",
+#                     "SOC"
+#                   )
+#                 
+#                 # perform spatial thinning on points
+#                 set.seed(42)
+#                 
+#                 if(dim(result_points)[1] > 1){
+#                   points_occ <-
+#                     dismo::gridSample(as.matrix(st_coordinates(result_points)), currentEnv, n = 1)
+#                 } else {
+#                   points_occ <- st_coordinates(result_points)
+#                 }
+#                 
+#                 # convert to tibble
+#                 result_points <-
+#                   as_tibble(points_occ) %>%
+#                   mutate(Binomial = inv_tax[[i]]) %>%
+#                   rename(decimalLongitude = X,
+#                          decimalLatitude = Y)
+#                 
+#                 citation_text <- atlas_citation(result)
+#                 doi <- str_extract(citation_text, "https://doi\\.org/[0-9a-zA-Z./\\-]+")
+#                 
+#                 # save sample sizes
+#                 tibble(Binomial = inv_tax[[i]],
+#                        n_pre = nrow(result),
+#                        n_post = nrow(result_points),
+#                        date = as.character(today()),
+#                        doi = doi) %>%
+#                   write_csv("data/sample_sizes.csv", append = T)
+#                 
+#                 # export points
+#                 write_csv(result_points,
+#                           paste("data/invasive/occurrences/", oz_tax[[i]], ".csv", sep = ""))
+#               }
+#             }
+#           }
+#         }
+# stopCluster(cl)
+#
+# # convert to single dataframe
+# inv_points <-
+#   bind_rows(lapply(dir("data/invasive/occurrences/"), function(x)
+#     read_csv(paste("data/invasive/occurrences/", x, sep = "")) %>% mutate(Binomial = str_remove(x, ".csv"))))
+# 
+# # export points
+# write_rds(inv_points, "data/inv_points.RDS")
 
 # SDMs
-# import point locality of Australian invmal occurrences
+# import point locality of Australian invasive species occurrences
 inv_points <- readRDS("data/inv_points.RDS") %>%
   st_as_sf(coords = c("decimalLongitude", "decimalLatitude"),
            crs = st_crs(oz_map)) %>%
   filter(!(st_coordinates(geometry)[, 2] < -40 & Binomial == "Vulpes vulpes")) # drop fox localities from Tasmania (erroneous)
 
 # import current environmental layers
-currentEnv <- stack("data/SDM/Current.tif")
+currentEnv <- rast("data/SDM/Current.tif")
 names(currentEnv) <-
   c(
     "bio1",
@@ -166,7 +169,7 @@ futureLayers <-
   futureLayers[is.na(str_match(futureLayers, "Current"))]
 futureEnv <- list()
 for (i in 1:length(futureLayers)) {
-  futureEnv[[i]] <- stack(futureLayers[[i]])
+  futureEnv[[i]] <- rast(futureLayers[[i]])
   names(futureEnv[[i]]) <-
     c(
       "bio1",
@@ -188,6 +191,7 @@ for (i in 1:length(futureLayers)) {
     )
 }
 
+# generate vectors with names of models and years of projection
 # generate vectors with names of models and years of projection
 models <-
   c(
@@ -221,34 +225,26 @@ oz_grid <- st_make_grid(oz_map, cellsize = res(currentEnv) * 10)
 
 inv_sdm <-
   tibble(
-    AUC_GAM = character(),
-    AUC_GBM = character(),
-    AUC_GLM = character(),
-    AUC_MAXENT = character(),
-    AUC_RF = character(),
-    BOYCE_GAM = character(),
-    BOYCE_GBM = character(),
-    BOYCE_GLM = character(),
-    BOYCE_MAXENT = character(),
-    BOYCE_RF = character(),
-    TSS_GAM = character(),
-    TSS_GBM = character(),
-    TSS_GLM = character(),
-    TSS_MAXENT = character(),
-    TSS_RF = character(),
+    AUC = character(),
+    BOYCE = character(),
+    TSS = character(),
+    block_size = character(),
+    k = character(),
     threshold = character(),
     n = character(),
     Binomial = character()
   )
-failed <- c()
-
-cores = detectCores()
-cl <- cores[1] - 1 ## set to use all but one thread - replace if necessary
+failed <-
+  tibble(
+    Binomial = character(),
+    reason = character()
+  )
 
 # iterate loop over all invasive taxa
 for (i in 1:length(inv_tax)) {
-  # set seed for reproducibility
-  set.seed(42)
+  # cleanup
+  env <- foreach:::.foreachGlobals
+  rm(list=ls(name=env), pos=env)
   
   # filter points for ith species and generate background points
   points_occ <-
@@ -258,16 +254,13 @@ for (i in 1:length(inv_tax)) {
     )) %>%
     as_tibble()
   
-  if (nrow(points_occ) == 1) {
-    failed <- c(failed, inv_tax[[i]])
+  if (nrow(points_occ) < 10) {
+    failed <- bind_rows(failed,
+                        setNames(c(inv_tax[[i]], "not enough points"), names(failed)))
     inv_sdm <- bind_rows(inv_sdm,
-                         setNames(c(rep(NA, 16), inv_tax[[i]]), names(inv_sdm)))
+                         setNames(c(rep(NA, 6), nrow(points_occ), inv_tax[[i]]), names(inv_sdm)))
     next
   }
-  
-  # perform spatial thinning on points
-  points_occ <-
-    dismo::gridSample(as.matrix(points_occ[, 1:2]), currentEnv, n = 1)
   
   pnts_occ <-
     st_intersects(oz_grid, st_as_sf(
@@ -275,13 +268,6 @@ for (i in 1:length(inv_tax)) {
       coords = c("X", "Y"),
       crs = st_crs(oz_map)
     ))
-  
-  if (nrow(points_occ) < 10) {
-    failed <- c(failed, inv_tax[[i]])
-    inv_sdm <- bind_rows(inv_sdm,
-                         setNames(c(rep(NA, 16), inv_tax[[i]]), names(inv_sdm)))
-    next
-  }
   
   # drop from background points all presence points
   pnts_bg <-
@@ -312,7 +298,7 @@ for (i in 1:length(inv_tax)) {
   
   sp_training <-
     sp_training %>%
-    bind_cols(extract(currentEnv, as(sp_training, "Spatial"))) %>%
+    bind_cols(extract(currentEnv, sp_training)[,-1]) %>%
     filter_all(~!is.na(.))
   
   training <-
@@ -330,51 +316,112 @@ for (i in 1:length(inv_tax)) {
   bgNum <- as.numeric(table(training$occ)["0"]) # number of backgrounds
   wt <- ifelse(training$occ == 1, 1, prNum / bgNum)
   
-  # generate SDMs
-  biomod_options <- BIOMOD_ModelingOptions(GBM = list(distribution = "bernoulli",
-                                                      n.trees = 2500,
-                                                      interaction.depth = 3,
-                                                      n.minobsinnode = 5,
-                                                      learning.rate = 0.01,
-                                                      bag.fraction = 0.75,
-                                                      train.fraction = 1,
-                                                      keep.data = FALSE,
-                                                      verbose = FALSE,
-                                                      n.cores = 1),
-                                           GLM = list(type = 'quadratic',
-                                                      interaction.level = 0,
-                                                      myFormula = NULL,
-                                                      test = 'AIC',
-                                                      family = binomial(link = 'logit'),
-                                                      mustart = 0.5,
-                                                      control = glm.control(epsilon = 1e-08, maxit = 50, trace = FALSE)),
-                                           MAXENT = list(path_to_maxent.jar = jar, 
-                                                         memory_allocated = 512,
-                                                         initial_heap_size = NULL,
-                                                         maximum_heap_size = NULL,
-                                                         background_data_dir = 'default',
-                                                         maximumbackground = 'default',
-                                                         maximumiterations = 200,
-                                                         visible = FALSE,
-                                                         linear = TRUE,
-                                                         quadratic = TRUE,
-                                                         product = TRUE,
-                                                         threshold = TRUE,
-                                                         hinge = TRUE,
-                                                         lq2lqptthreshold = 80,
-                                                         l2lqthreshold = 10,
-                                                         hingethreshold = 15,
-                                                         beta_threshold = -1,
-                                                         beta_categorical = -1,
-                                                         beta_lqp = -1,
-                                                         beta_hinge = -1,
-                                                         betamultiplier = 1,
-                                                         defaultprevalence = 0.5))
+  # Try cv_spatial_autocor, but continue if it fails
+  cv_test_result <- tryCatch({
+    cv_spatial_autocor(r = currentEnv, x = sp_training, column = "occ")
+  }, error = function(e) {
+    cat("cv_spatial_autocor failed, using default size of 700000\n")
+    return(NULL)
+  })
   
+  # Set size based on whether cv_spatial_autocor succeeded
+  if (is.null(cv_test_result)) {
+    block_size <- 700000
+  } else {
+    block_size <- min(ceiling(cv_test_result$range/1000)*1000, 700000)
+  }
+  
+  # generate CV blocks
+  # Start with k = 4
+  k_value <- 4
+  success <- FALSE
+  warning_messages <- character(0)
+  
+  # Create a function to run cv_spatial and capture warnings
+  run_cv_spatial <- function(k) {
+    # This will store any warnings
+    warnings_captured <- NULL
+    
+    # Run cv_spatial with warning handler
+    result <- withCallingHandlers(
+      tryCatch({
+        cv_spatial(
+          x = sp_training,
+          column = "occ",
+          r = currentEnv,
+          k = k, # number of folds
+          size = block_size, # use the determined size
+          selection = "random", # random blocks-to-fold
+          iteration = 50, # find evenly dispersed folds
+          progress = FALSE, # turn off progress bar
+          biomod2 = TRUE, # also create folds for biomod2
+          seed = 42
+        )
+      }, error = function(e) {
+        # Return the error message if there's an error
+        return(list(result = NULL, error = conditionMessage(e)))
+      }),
+      warning = function(w) {
+        # Capture warnings
+        warnings_captured <<- c(warnings_captured, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+    
+    # Return both the result and any warnings
+    return(list(result = result, warnings = warnings_captured))
+  }
+  
+  # Loop until successful or k reaches 2
+  while (!success && k_value >= 2) {
+    cat(paste0("Trying with k = ", k_value, "\n"))
+    
+    # Run cv_spatial and capture result and warnings
+    output <- run_cv_spatial(k_value)
+    scv1 <- output$result
+    current_warnings <- output$warnings
+    
+    # Check if there was a zero records warning
+    zero_records_warning <- grep("Fold .* has class\\(es\\) with zero records", current_warnings)
+    
+    if (length(zero_records_warning) == 0) {
+      # No zero records warning, we're successful
+      success <- TRUE
+      cat("Successfully created spatial CV blocks.\n")
+    } else {
+      # Got zero records warning, reduce k and try again
+      warning_messages <- c(warning_messages, 
+                            paste0("With k = ", k_value, ": ", 
+                                   current_warnings[zero_records_warning[1]]))
+      k_value <- k_value - 1
+    }
+  }
+  
+  # Output results
+  if (success) {
+    cat(paste0("Final k value used: ", k_value, "\n"))
+  } else {
+    cat("Failed to create spatial CV blocks even with k = 2.\n")
+    failed <- bind_rows(failed,
+                        setNames(c(inv_tax[[i]], "failed to create spatial CV blocks"), names(failed)))
+    inv_sdm <- bind_rows(inv_sdm,
+                         setNames(c(rep(NA, 6), nrow(points_occ), inv_tax[[i]]), names(inv_sdm)))
+    next
+  }
+  
+  # The final scv1 object contains the successful spatial cross-validation result
+  
+  # use generated folds from cv_spatial in previous section
+  spatial_cv_folds <- scv1$biomod_table
+  # the new update of the package biomod2 (v4.2-3 <) requires the names to be as below
+  colnames(spatial_cv_folds) <- paste0("_allData_RUN", 1:ncol(spatial_cv_folds))
+  
+  # generate SDMs (use bigboss settings)
   biomod_model_out <- BIOMOD_Modeling(biomod_data,
                                       models = c('GBM','GLM','GAM','MAXENT','RF'),
-                                      bm.options = biomod_options,
-                                      CV.strategy = 'block',
+                                      OPT.strategy = 'bigboss',
+                                      CV.strategy = 'user.defined',
+                                      CV.user.table = spatial_cv_folds,
                                       metric.eval = c('ROC', 'TSS'),
                                       weights = wt,
                                       seed.val = 42,
@@ -394,18 +441,45 @@ for (i in 1:length(inv_tax)) {
   dev.off()
   
   # projections
-  ens_pred <- BIOMOD_EnsembleForecasting(bm.em = ens_model,
-                                         models.chosen = get_built_models(ens_model)[[2]],
-                                         proj.name = "ens",
-                                         new.env = currentEnv,
-                                         build.clamping.mask = FALSE,
-                                         output.format = ".tif",
-                                         nb.cpu = cl)
+  mod.dir <- dir("occ.inv/models", full.names = T)
+  mods <- lapply(dir(mod.dir, full.names = T)[!str_detect(dir(mod.dir), "outputs|merged")],
+                 function(x)
+                   get(load(x)))
+  names(mods) <- dir(mod.dir)[!str_detect(dir(mod.dir), "outputs|merged")]
   
-  pr <- raster::raster(get_predictions(ens_pred))
+  weights <- sapply(1:length(mods), function(x) mods[[x]]@model_evaluation[2,6])
+  weights <- round(weights/sum(weights, na.rm = TRUE), digits = 3)
+  
+  # Create temporary directory for parallel predictions
+  temp_pred_dir <- tempdir()
+  temp_pred_files <- file.path(temp_pred_dir, paste0("pred_", 1:length(mods), ".tif"))
+  
+  # Use mclapply with disk-based storage to avoid pointer issues
+  mclapply(1:length(mods),
+           function(x){
+             temp_workdir = NULL
+             if(str_detect(names(mods)[[x]], "MAXENT")){
+               temp_workdir = mods[[x]]@model_output_dir
+             }
+             pred <- predict(mods[[x]], currentEnv, on_0_1000 = T,
+                             temp_workdir = temp_workdir, overwrite = T,
+                             seedval = 42, mod.name = names(mods)[[x]])
+             # Write prediction to disk
+             terra::writeRaster(pred, temp_pred_files[x], overwrite = TRUE)
+             return(temp_pred_files[x])
+           },
+           mc.cores = cl
+  )
+  
+  # Read predictions back from disk
+  ens_pred <- lapply(temp_pred_files, function(f) terra::rast(f))
+  pr <<- weighted.mean(do.call(c, ens_pred), w = weights)
   names(pr) = "layer"
   
   pr_df = as.data.frame(pr/1000, xy = T)
+  
+  # Clean up temporary files
+  file.remove(temp_pred_files)
   
   # plot habitat suitability probability
   pdf(paste("output/SDM/Current/Maps/", inv_tax[[i]], "_prob.pdf", sep = ""),
@@ -429,7 +503,7 @@ for (i in 1:length(inv_tax)) {
   dev.off()
   
   # extract model estimated suitability
-  est = raster::extract(pr, st_coordinates(sp_training))
+  est = terra::extract(pr, sp_training)[,2]
   # detect threshold for presence/absence
   thr = bm_FindOptimStat(metric.eval = "TSS", obs = sp_training$occ, fit = est)
   # convert predicted probability to presence-absence based on threshold maximising the sum of sensitivity and specificity
@@ -439,29 +513,30 @@ for (i in 1:length(inv_tax)) {
   inv_sdm <-
     inv_sdm %>%
     bind_rows(
-      setNames(c(BIOMOD_PresenceOnly(biomod_model_out) %>%
+      setNames(c(bind_rows(bm_FindOptimStat(metric.eval = "ROC",
+                                            sp_training$occ,
+                                            est),
+                           bm_FindOptimStat(metric.eval = "BOYCE",
+                                            sp_training$occ,
+                                            est),
+                           bm_FindOptimStat(metric.eval = "TSS",
+                                            sp_training$occ,
+                                            est)) %>%
                    as_tibble() %>%
-                   mutate(metric.eval = case_when(metric.eval == "ROC" ~ "AUC",
-                                                  T ~ metric.eval)) %>%
-                   group_by(metric.eval, algo) %>%
-                   summarise(validation = mean(validation)) %>%
-                   filter(metric.eval %in% c("AUC", "TSS", "BOYCE")) %>%
-                   pull(validation),
-                 thr$cutoff,
+                   pull(best.stat),
+                 block_size,
+                 k_value,
+                 thr$cutoff/1000,
+                 nrow(points_occ),
                  inv_tax[[i]]),
                names(inv_sdm))
     )
   
   # convert current presence-absence map to polygon
   current <-
-    rasterToPolygons(
-      pr_thr,
-      fun = function(x) {
-        x == 1
-      },
-      dissolve = T
-    ) %>%
+    as.polygons(pr_thr) %>%
     st_as_sf() %>%
+    filter(layer == 1) %>%
     st_cast("POLYGON")
   
   # find which areas of suitable habitat do not overlap occurrences
@@ -507,15 +582,17 @@ for (i in 1:length(inv_tax)) {
                                 crs = st_crs(oz_map)
                               ))
   landmasses <- st_cast(oz_map, "POLYGON")[lengths(landmasses) > 0, ] %>%
-    st_union()
+    st_union() %>%
+    st_as_sf()
   
   # export habitat suitability under current climate conditions
-  current_predictions <- list(pr/1000,
-                              pr_thr)
+  current_predictions <- c(pr/1000,
+                           as.numeric(pr_thr))
   names(current_predictions) <-
     c("predicted_probability", "presence_absence")
-  writeRaster(stack(current_predictions),
-              paste("output/SDM/Current/Rasters/", inv_tax[[i]], ".tif", sep = ""))
+  writeRaster(current_predictions,
+              paste("output/SDM/Current/Rasters/", inv_tax[[i]], ".tif", sep = ""),
+              overwrite = T)
   write_sf(current,
            paste("output/SDM/Current/Shapefiles/", inv_tax[[i]], ".shp", sep = ""))
   
@@ -552,23 +629,41 @@ for (i in 1:length(inv_tax)) {
   future_predictions <- list()
   for(k in 1:length(futureEnv)) {
     # make predictions under future conditions
-    ens_predf <- BIOMOD_EnsembleForecasting(bm.em = ens_model,
-                                            models.chosen = get_built_models(ens_model)[[2]],
-                                            proj.name = "ens",
-                                            new.env = futureEnv[[k]],
-                                            build.clamping.mask = FALSE,
-                                            output.format = ".tif",
-                                            nb.cpu = cl)
+    # Create temporary directory for parallel predictions
+    temp_pred_dir <- tempdir()
+    temp_pred_files <- file.path(temp_pred_dir, paste0("pred_", 1:length(mods), ".tif"))
     
-    prf <- raster::raster(get_predictions(ens_predf))
+    # Use mclapply with disk-based storage to avoid pointer issues
+    mclapply(1:length(mods),
+             function(x){
+               temp_workdir = NULL
+               if(str_detect(names(mods)[[x]], "MAXENT")){
+                 temp_workdir = mods[[x]]@model_output_dir
+               }
+               pred <- predict(mods[[x]], futureEnv[[k]], on_0_1000 = T,
+                               temp_workdir = temp_workdir, overwrite = T,
+                               seedval = 42, mod.name = names(mods)[[x]])
+               # Write prediction to disk
+               terra::writeRaster(pred, temp_pred_files[x], overwrite = TRUE)
+               return(temp_pred_files[x])
+             },
+             mc.cores = cl
+    )
+    
+    # Read predictions back from disk
+    ens_predf <- lapply(temp_pred_files, function(f) terra::rast(f))
+    prf <<- weighted.mean(do.call(c, ens_predf), w = weights)
     names(prf) = "layer"
+    
+    # Clean up temporary files
+    file.remove(temp_pred_files)
     
     # convert predicted probability to presence-absence based on threshold maximising the sum of sensitivity and specificity
     prf_thr = prf > thr$cutoff
     
     # save habitat suitability under future climate conditions
-    future_preds <- list(prf/1000,
-                         prf_thr)
+    future_preds <- c(prf/1000,
+                      as.numeric(prf_thr))
     names(future_preds) <-
       c("predicted_probability", "presence_absence")
     
@@ -579,75 +674,85 @@ for (i in 1:length(inv_tax)) {
     str_remove_all(futureLayers, "data/SDM/|.tif")
   
   # extract all future predicted presence-absence maps
-  future <- lapply(future_predictions, "[[", "presence_absence")
+  dir.create("temp_rast")
   
-  cl <- makeCluster(3)
-  registerDoSNOW(cl)
+  lapply(1:length(future_predictions),
+         function(k) writeRaster(future_predictions[[k]][[2]],
+                                 filename = paste0("temp_rast/", k, ".tif"),
+                                 overwrite = T))
+  
+  # cleanup
+  rm(cl_f)
+  
+  cl_f <- makeCluster(3)
+  registerDoSNOW(cl_f)
   
   future_all <- foreach(scenario = 1:3,
-                        .packages = c("tidyverse", "sf", "raster"),
-                        .export = c("future",
+                        .packages = c("tidyverse", "sf", "terra"),
+                        .export = c("current", "landmasses",
                                     "oz_map", "extant_buff",
                                     "inv_tax", "models", "years"),
                         .inorder = TRUE,
                         .errorhandling = "pass",
                         .verbose = FALSE) %dopar% {
                           
+                          future_n <- list()
+                          
                           # iterate over all future projections
                           kmax = 4
                           for (m in 1:2) {
+                            
                             if(scenario == 1){
                               ## standard dispersal model ##
                               # for each GCM and SSP set the current buffered suitable habitat to be the extant
                               current_buff <- extant_buff
-                              for (k in (kmax - 3):kmax) {
-                                # for each time-step
-                                # if no suitable habitat exists in time step, save empty polygon
-                                if (maxValue(future[[k]]) == 0)
-                                  future_next <- st_sf(x = st_sfc(st_multipolygon()),
-                                                       crs = st_crs(oz_map)) %>%
-                                    dplyr::mutate(Binomial = inv_tax[[i]],
-                                                  Model = models[[k]],
-                                                  Year = years[[k]])
-                                else {
-                                  # import presence-absence map for the next time-step and convert to polygon
-                                  # capture instance where only one pixel remains
-                                  if (length(which(values(future[[k]]) == 1)) == 1) {
-                                    future_next <- rasterToPolygons(
-                                      future[[k]],
-                                      dissolve = T
-                                    ) %>%
-                                      st_as_sf(crs = st_crs(oz_map)) %>%
-                                      filter(layer > 0) %>%
-                                      st_cast("POLYGON")
-                                  } else {
-                                    future_next <-
-                                      rasterToPolygons(
-                                        future[[k]],
-                                        fun = function(x) {
-                                          x == 1
-                                        },
-                                        dissolve = T
-                                      ) %>%
-                                      st_as_sf(crs = st_crs(oz_map)) %>%
-                                      st_cast("POLYGON")
-                                  }
-                                  
-                                  # find and filter out areas of suitable habitat which do not intersect with buffered suitable habitat for current time-step
-                                  future_oz <- st_intersects(future_next, current_buff)
-                                  future_logical = lengths(future_oz) > 0
-                                  
-                                  future_next <- future_next[future_logical, ] %>%
-                                    st_union() %>%
-                                    st_as_sf() %>%
-                                    dplyr::mutate(Binomial = inv_tax[[i]],
-                                                  Model = models[[k]],
-                                                  Year = years[[k]])
-                                }
-                                
-                                # save filtered suitable habitat
-                                future[[k]] <- future_next
-                                
+                            }
+                            
+                            if(scenario == 2){
+                              ## standard dispersal model ##
+                              # for each GCM and SSP set the current suitable habitat (no buffer) to be the extant
+                              current_buff <- current
+                            }
+                            
+                            for (k in (kmax - 3):kmax) {
+                              future <- 
+                                rast(paste0("temp_rast/", k, ".tif"))
+                              
+                              # for each time-step
+                              if(scenario %in% c(1, 2)){
+                                ## standard dispersal model ##
+                                # find and filter out areas of suitable habitat which do not intersect with buffered suitable habitat for current time-step
+                                future_oz <- mask(future, current_buff)
+                              }
+                              
+                              if(scenario == 3){
+                                ## max dispersal ##
+                                future_oz <- mask(future, landmasses)
+                              }
+                              
+                              # if no suitable habitat exists in time step, save empty polygon
+                              if (!any(unique(future_oz) == 1)){
+                                future_next <- st_sf(x = st_sfc(st_multipolygon()),
+                                                     crs = st_crs(oz_map)) %>%
+                                  dplyr::mutate(Binomial = inv_tax[[i]],
+                                                Model = models[[k]],
+                                                Year = years[[k]])
+                              } else {
+                                # import presence-absence map for the next time-step and convert to polygon
+                                future_next <- as.polygons(future_oz) %>%
+                                  st_as_sf(crs = st_crs(oz_map)) %>%
+                                  filter(presence_absence > 0) %>%
+                                  st_cast("POLYGON") %>%
+                                  st_union() %>%
+                                  st_as_sf() %>%
+                                  dplyr::mutate(Binomial = inv_tax[[i]],
+                                                Model = models[[k]],
+                                                Year = years[[k]])
+                              }
+                              
+                              # save filtered suitable habitat
+                              if(scenario == 1){
+                                ## standard dispersal model ##
                                 # update buffered current suitable habitat for next iteration
                                 current_buff <- future_next %>%
                                   st_transform(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=km +no_defs") %>%
@@ -666,133 +771,45 @@ for (i in 1:length(inv_tax)) {
                                   dplyr::mutate(Binomial = inv_tax[[i]],
                                                 Model = models[[k]],
                                                 Year = years[[k]])
-                              }
-                            }
-                            
-                            if(scenario == 2){
-                              ## no dispersal ##
-                              for (k in (kmax - 3):kmax) {
-                                # for each time-step
-                                # if no suitable habitat exists in time step, save empty polygon
-                                if (maxValue(future[[k]]) == 0)
-                                  future_next <- st_sf(x = st_sfc(st_multipolygon()),
-                                                       crs = st_crs(oz_map)) %>%
-                                    dplyr::mutate(Binomial = inv_tax[[i]],
-                                                  Model = models[[k]],
-                                                  Year = years[[k]])
-                                else {
-                                  # import presence-absence map for the next time-step and convert to polygon
-                                  # capture instance where only one pixel remains
-                                  if (length(which(values(future[[k]]) == 1)) == 1) {
-                                    future_next <- rasterToPolygons(
-                                      future[[k]],
-                                      dissolve = T
-                                    ) %>%
-                                      st_as_sf(crs = st_crs(oz_map)) %>%
-                                      filter(layer > 0) %>%
-                                      st_cast("POLYGON")
-                                  } else {
-                                    future_next <-
-                                      rasterToPolygons(
-                                        future[[k]],
-                                        fun = function(x) {
-                                          x == 1
-                                        },
-                                        dissolve = T
-                                      ) %>%
-                                      st_as_sf(crs = st_crs(oz_map)) %>%
-                                      st_cast("POLYGON")
-                                  }
-                                  
-                                  # find and filter out areas of suitable habitat which do not intersect with buffered suitable habitat for current time-step
-                                  future_oz <- st_intersects(future_next, current)
-                                  future_logical = lengths(future_oz) > 0
-                                  
-                                  future_next <- future_next[future_logical, ] %>%
-                                    st_union() %>%
-                                    st_as_sf() %>%
-                                    dplyr::mutate(Binomial = inv_tax[[i]],
-                                                  Model = models[[k]],
-                                                  Year = years[[k]])
-                                }
                                 
-                                # save filtered suitable habitat
-                                future[[k]] <- current <- future_next
+                                future_n[[k]] <- future_next
                               }
-                            }
-                            
-                            if(scenario == 3){
-                              ## max dispersal ##
-                              for (k in (kmax - 3):kmax) {
-                                # for each time-step
-                                # if no suitable habitat exists in time step, save empty polygon
-                                if (maxValue(future[[k]]) == 0)
-                                  future_next <- st_sf(x = st_sfc(st_multipolygon()),
-                                                       crs = st_crs(oz_map)) %>%
-                                    dplyr::mutate(Binomial = inv_tax[[i]],
-                                                  Model = models[[k]],
-                                                  Year = years[[k]])
-                                else {
-                                  # import presence-absence map for the next time-step and convert to polygon
-                                  # capture instance where only one pixel remains
-                                  if (length(which(values(future[[k]]) == 1)) == 1) {
-                                    future_next <- rasterToPolygons(
-                                      future[[k]],
-                                      dissolve = T
-                                    ) %>%
-                                      st_as_sf(crs = st_crs(oz_map)) %>%
-                                      filter(layer > 0) %>%
-                                      st_cast("POLYGON")
-                                  } else {
-                                    future_next <-
-                                      rasterToPolygons(
-                                        future[[k]],
-                                        fun = function(x) {
-                                          x == 1
-                                        },
-                                        dissolve = T
-                                      ) %>%
-                                      st_as_sf(crs = st_crs(oz_map)) %>%
-                                      st_cast("POLYGON")
-                                  }
-                                  
-                                  # filter out areas of suitable habitat which do not overlap landmasses with occurrences
-                                  future_oz <- st_intersects(future_next, landmasses)
-                                  future_logical = lengths(future_oz) > 0
-                                  
-                                  future_next <- future_next[future_logical, ] %>%
-                                    st_union() %>%
-                                    st_as_sf() %>%
-                                    dplyr::mutate(Binomial = inv_tax[[i]],
-                                                  Model = models[[k]],
-                                                  Year = years[[k]])
-                                }
-                                
-                                # save filtered suitable habitat
-                                future[[k]] <- future_next
+                              
+                              
+                              if(scenario == 2){
+                                ## no dispersal ##
+                                future_n[[k]] <- current_buff <- future_next
+                              }
+                              
+                              if(scenario == 3){
+                                ## max dispersal ##
+                                future_n[[k]] <- future_next
                               }
                             }
                             
                             kmax = kmax + 4
                           }
-                          future
+                          
+                          future_n
                         }
-  stopCluster(cl)
+  stopCluster(cl_f)
   
   future <- bind_rows(future_all[[1]])
   future_maxdisp <- bind_rows(future_all[[3]])
   future_nodisp <- bind_rows(future_all[[2]])
+  
+  unlink("temp_rast", recursive = TRUE)
   
   future <- bind_rows(future %>% mutate(Dispersal = "Mean"),
                       future_nodisp %>% mutate(Dispersal = "Min"),
                       future_maxdisp %>% mutate(Dispersal = "Max"))
   
   # export habitat suitability under future climate conditions
-  writeRaster(stack(lapply(1:length(future_predictions),
-                           function(x)
-                             setNames(stack(future_predictions[[x]]),
-                                      paste(names(future_predictions)[x], names(future_predictions[[x]]), sep = "_")))),
-              paste("output/SDM/Future/Rasters/", inv_tax[[i]], ".tif", sep = ""))
+  writeRaster(do.call(c, lapply(1:length(future_predictions),
+                                function(x)
+                                  setNames(future_predictions[[x]],
+                                           paste(names(future_predictions)[x], names(future_predictions[[x]]), sep = "_")))),
+              paste("output/SDM/Future/Rasters/", inv_tax[[i]], ".tif", sep = ""), overwrite = T)
   write_sf(future,
            paste("output/SDM/Future/Shapefiles/", inv_tax[[i]], ".shp", sep = ""))
   
@@ -818,7 +835,7 @@ for (i in 1:length(inv_tax)) {
       ggplot() +
       geom_sf(aes(geometry = geometry), colour = NA) +
       geom_raster(data = prf_df %>% drop_na(), aes(
-        x = x, y = y, fill = layer
+        x = x, y = y, fill = predicted_probability
       )) +
       theme_bw() +
       scale_fill_gradientn(colours = viridis::viridis(99),
@@ -915,8 +932,12 @@ for (i in 1:length(inv_tax)) {
   )
   dev.off()
   
+  
   unlink("occ.inv", recursive = TRUE)
 }
 
-# export results file
-write_csv(drop_na(inv_sdm), "output/SDM/inv_summary.csv")
+# export results files
+write_csv(inv_sdm, "output/SDM/inv_summary.csv")
+if(nrow(failed) > 0){
+  write_csv(failed, "output/SDM/inv_failed.csv")
+}
