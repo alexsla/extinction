@@ -3041,7 +3041,9 @@ biomes %&gt;%
     name = &quot;Biome&quot;
   ) +
   theme_void() +
-  theme(legend.position = &quot;none&quot;)
+  theme(legend.position = &quot;none&quot;) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 ggplot2::ggsave(&quot;output/biomes_map.pdf&quot;)
 
@@ -3117,6 +3119,14 @@ tet_data %&gt;%
 
 ggplot2::ggsave(&quot;output/extinct_biomes.pdf&quot;)
 
+# create map extent (exclude Norfolk Island and Heard &amp; McDonald)
+map_ext &lt;-
+  (oz_map %&gt;%
+     st_cast(&quot;POLYGON&quot;))[
+       -c(which.min((oz_map %&gt;% st_cast(&quot;POLYGON&quot;) %&gt;% st_centroid() %&gt;% st_coordinates())[,2]),
+          which.max((oz_map %&gt;% st_cast(&quot;POLYGON&quot;) %&gt;% st_centroid() %&gt;% st_coordinates())[,1])),
+     ] %&gt;% st_bbox
+
 # plot map of species predicted to go extinct
 future_extinct &lt;- tet_current %&gt;%
   left_join(tet_iucn %&gt;%
@@ -3132,7 +3142,9 @@ future_extinct &lt;- tet_current %&gt;%
           colour = &quot;grey&quot;) +
   geom_sf(fill = &quot;black&quot;, colour = NA) +
   theme_void() +
-  facet_grid(rows = vars(Year), cols = vars(Model))
+  facet_grid(rows = vars(Year), cols = vars(Model)) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 ggplot2::ggsave(
   &quot;output/future_extinct_tet.pdf&quot;,
@@ -3177,7 +3189,9 @@ thrt_rich_current %&gt;%
   scale_fill_gradient(low = &quot;grey90&quot;,
                       high = &quot;darkred&quot;,
                       name = &quot;Proportion of threatened species&quot;) +
-  theme(legend.position = &quot;bottom&quot;)
+  theme(legend.position = &quot;bottom&quot;) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 ggsave(&quot;output/threat_hotspots_2020.pdf&quot;)
 
@@ -3212,7 +3226,9 @@ thrt_rich_future %&gt;%
   scale_fill_gradient(low = &quot;grey90&quot;,
                       high = &quot;darkred&quot;,
                       name = &quot;Proportion of threatened species&quot;) +
-  theme(legend.position = &quot;none&quot;)
+  theme(legend.position = &quot;none&quot;) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 ggsave(&quot;output/threat_hotspots_2100_mindisp.pdf&quot;)
 
@@ -3248,7 +3264,9 @@ thrt_rich_future %&gt;%
   scale_fill_gradient(low = &quot;grey90&quot;,
                       high = &quot;darkred&quot;,
                       name = &quot;Proportion of threatened species&quot;) +
-  theme(legend.position = &quot;none&quot;)
+  theme(legend.position = &quot;none&quot;) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 ggsave(&quot;output/threat_hotspots_2100_meandisp.pdf&quot;)
 
@@ -3284,7 +3302,9 @@ thrt_rich_future %&gt;%
   scale_fill_gradient(low = &quot;grey90&quot;,
                       high = &quot;darkred&quot;,
                       name = &quot;Proportion of threatened species&quot;) +
-  theme(legend.position = &quot;none&quot;)
+  theme(legend.position = &quot;none&quot;) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 ggsave(&quot;output/threat_hotspots_2100_maxdisp.pdf&quot;)
 
@@ -3432,7 +3452,9 @@ plot_grid(
     scale_fill_manual(
       values = c(&quot;yellow&quot;, &quot;red&quot;, &quot;purple&quot;, &quot;black&quot;),
       name = &quot;No. of classes&quot;
-    ),
+    ) +
+    coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+             ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;])),
   nrow = 1
 )
 
@@ -4161,7 +4183,9 @@ p_future_direct &lt;- direct_future %&gt;%
   labs(x = &quot;Longitude&quot;,
        y = &quot;Latitude&quot;) +
   facet_grid(rows = vars(Year),
-             cols = vars(Model))
+             cols = vars(Model)) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 ggsave(
   &quot;output/AA/direction_iucn_tet_maps.pdf&quot;,
@@ -4204,7 +4228,9 @@ p_future_magnitude &lt;- direct_future %&gt;%
   labs(x = &quot;Longitude&quot;,
        y = &quot;Latitude&quot;) +
   facet_grid(rows = vars(Year),
-             cols = vars(Model))
+             cols = vars(Model)) +
+  coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+           ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
 # plot distributions of range contractions/expansions
 ggsave(
