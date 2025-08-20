@@ -6,7 +6,10 @@ library(biomod2)
 library(blockCV)
 library(parallel)
 library(pbapply)
-library(doSNOW)
+
+unlink("occ.inv", recursive = TRUE)
+
+sf_use_s2(FALSE)
 
 cores = detectCores()
 cl <- 8 ## set to use all but one thread - replace if necessary
@@ -223,22 +226,20 @@ points_bg_inv <-
 
 oz_grid <- st_make_grid(oz_map, cellsize = res(currentEnv) * 10)
 
-inv_sdm <-
+# generate new output files if don't already exist
+if(!file.exists("output/SDM/inv_summary.csv")){
   tibble(
-    AUC = character(),
-    BOYCE = character(),
-    TSS = character(),
-    block_size = character(),
-    k = character(),
-    threshold = character(),
-    n = character(),
+    AUC = numeric(),
+    BOYCE = numeric(),
+    TSS = numeric(),
+    block_size = numeric(),
+    k = numeric(),
+    threshold = numeric(),
+    n = numeric(),
     Binomial = character()
-  )
-failed <-
-  tibble(
-    Binomial = character(),
-    reason = character()
-  )
+  ) %>%
+    write_csv("output/SDM/inv_summary.csv")
+}
 
 # iterate loop over all invasive taxa
 for (i in 1:length(inv_tax)) {
@@ -255,10 +256,15 @@ for (i in 1:length(inv_tax)) {
     as_tibble()
   
   if (nrow(points_occ) < 10) {
-    failed <- bind_rows(failed,
-                        setNames(c(inv_tax[[i]], "not enough points"), names(failed)))
-    inv_sdm <- bind_rows(inv_sdm,
-                         setNames(c(rep(NA, 6), nrow(points_occ), inv_tax[[i]]), names(inv_sdm)))
+    tibble(AUC = NA,
+           BOYCE = NA,
+           TSS = NA,
+           block_size = NA,
+           k = NA,
+           threshold = NA,
+           n = nrow(points_occ),
+           Binomial = inv_tax[[i]]) %>%
+      write_csv("output/SDM/inv_summary.csv", append = T)
     next
   }
   
@@ -320,15 +326,15 @@ for (i in 1:length(inv_tax)) {
   cv_test_result <- tryCatch({
     cv_spatial_autocor(r = currentEnv, x = sp_training, column = "occ")
   }, error = function(e) {
-    cat("cv_spatial_autocor failed, using default size of 700000\n")
+    cat("cv_spatial_autocor failed, using default size\n")
     return(NULL)
   })
   
   # Set size based on whether cv_spatial_autocor succeeded
   if (is.null(cv_test_result)) {
-    block_size <- 700000
+    block_size <- 1500000
   } else {
-    block_size <- min(ceiling(cv_test_result$range/1000)*1000, 700000)
+    block_size <- min(ceiling(cv_test_result$range/1000)*1000, 1500000)
   }
   
   # generate CV blocks
@@ -402,10 +408,15 @@ for (i in 1:length(inv_tax)) {
     cat(paste0("Final k value used: ", k_value, "\n"))
   } else {
     cat("Failed to create spatial CV blocks even with k = 2.\n")
-    failed <- bind_rows(failed,
-                        setNames(c(inv_tax[[i]], "failed to create spatial CV blocks"), names(failed)))
-    inv_sdm <- bind_rows(inv_sdm,
-                         setNames(c(rep(NA, 6), nrow(points_occ), inv_tax[[i]]), names(inv_sdm)))
+    tibble(AUC = NA,
+           BOYCE = NA,
+           TSS = NA,
+           block_size = NA,
+           k = NA,
+           threshold = NA,
+           n = nrow(points_occ),
+           Binomial = inv_tax[[i]]) %>%
+      write_csv("output/SDM/inv_summary.csv", append = T)
     next
   }
   
@@ -417,28 +428,47 @@ for (i in 1:length(inv_tax)) {
   colnames(spatial_cv_folds) <- paste0("_allData_RUN", 1:ncol(spatial_cv_folds))
   
   # generate SDMs (use bigboss settings)
-  biomod_model_out <- BIOMOD_Modeling(biomod_data,
-                                      models = c('GBM','GLM','GAM','MAXENT','RF'),
-                                      OPT.strategy = 'bigboss',
-                                      CV.strategy = 'user.defined',
-                                      CV.user.table = spatial_cv_folds,
-                                      metric.eval = c('ROC', 'TSS'),
-                                      weights = wt,
-                                      seed.val = 42,
-                                      nb.cpu = cl)
+  biomod_model_out <- tryCatch({
+    BIOMOD_Modeling(biomod_data,
+                    models = c('GBM','GLM','GAM','MAXENT','RF'),
+                    OPT.strategy = 'bigboss',
+                    CV.strategy = 'user.defined',
+                    CV.user.table = spatial_cv_folds,
+                    metric.eval = 'TSS',
+                    weights = wt,
+                    seed.val = 42,
+                    nb.cpu = cl)
+  }, error = function(e) {
+    cat("Failed to fit SDMs.\n")
+    tibble(AUC = NA,
+           BOYCE = NA,
+           TSS = NA,
+           block_size = NA,
+           k = NA,
+           threshold = NA,
+           n = nrow(points_occ),
+           Binomial = inv_tax[[i]]) %>%
+      write_csv("output/SDM/inv_summary.csv", append = T)
+    return(NULL)
+  })
+  
+  # Check if modeling failed and skip to next iteration
+  if (is.null(biomod_model_out)) {
+    next
+  }
   
   # generate ensemble model
   ens_model <- BIOMOD_EnsembleModeling(biomod_model_out,
                                        em.by = "all",
                                        em.algo = 'EMwmean',
-                                       metric.eval = c('ROC', 'TSS'))
+                                       metric.eval = 'TSS')
   
   # plot partial response curves
-  pdf(paste("output/SDM/Response Curves/", inv_tax[[i]], ".pdf", sep = ""),
-      useDingbats = F)
-  bm_PlotResponseCurves(ens_model,
-                        models.chosen = get_built_models(ens_model)[[2]])
-  dev.off()
+  ggsave(paste("output/SDM/Response Curves/", inv_tax[[i]], ".pdf", sep = ""),
+         bm_PlotResponseCurves(ens_model, do.plot = F)$plot,
+         width = 7,
+         height = 7,
+         units = "in")
   
   # projections
   mod.dir <- dir("occ.inv/models", full.names = T)
@@ -447,8 +477,10 @@ for (i in 1:length(inv_tax)) {
                    get(load(x)))
   names(mods) <- dir(mod.dir)[!str_detect(dir(mod.dir), "outputs|merged")]
   
-  weights <- sapply(1:length(mods), function(x) mods[[x]]@model_evaluation[2,6])
-  weights <- round(weights/sum(weights, na.rm = TRUE), digits = 3)
+  mods <- mods[names(mods) %in% ens_model@em.models_kept]
+  
+  weights <- sapply(1:length(mods), function(x) mods[[x]]@model_evaluation[,6])
+  weights <- weights/sum(weights, na.rm = TRUE)
   
   # Create temporary directory for parallel predictions
   temp_pred_dir <- tempdir()
@@ -482,25 +514,24 @@ for (i in 1:length(inv_tax)) {
   file.remove(temp_pred_files)
   
   # plot habitat suitability probability
-  pdf(paste("output/SDM/Current/Maps/", inv_tax[[i]], "_prob.pdf", sep = ""),
-      useDingbats = F)
-  print(
-    oz_map %>%
-      ggplot() +
-      geom_sf(aes(geometry = geometry), colour = NA) +
-      geom_raster(data = pr_df %>% drop_na(), aes(
-        x = x, y = y, fill = layer
-      )) +
-      theme_bw() +
-      scale_fill_gradientn(colours = viridis::viridis(99),
-                           name = "Predicted Habitat Suitability") +
-      labs(
-        y = "Latitude",
-        x = "Longitude",
-        title = str_replace(inv_tax[i], "_", " ")
-      )
-  )
-  dev.off()
+  ggsave(paste("output/SDM/Current/Maps/", inv_tax[[i]], "_prob.pdf", sep = ""),
+         oz_map %>%
+           ggplot() +
+           geom_sf(aes(geometry = geometry), colour = NA) +
+           geom_raster(data = pr_df %>% drop_na(), aes(
+             x = x, y = y, fill = layer
+           )) +
+           theme_bw() +
+           scale_fill_gradientn(colours = viridis::viridis(99),
+                                name = "Predicted Habitat Suitability") +
+           labs(
+             y = "Latitude",
+             x = "Longitude",
+             title = str_replace(inv_tax[i], "_", " ")
+           ),
+         width = 7,
+         height = 7,
+         units = "in")
   
   # extract model estimated suitability
   est = terra::extract(pr, sp_training)[,2]
@@ -508,29 +539,6 @@ for (i in 1:length(inv_tax)) {
   thr = bm_FindOptimStat(metric.eval = "TSS", obs = sp_training$occ, fit = est)
   # convert predicted probability to presence-absence based on threshold maximising the sum of sensitivity and specificity
   pr_thr = pr > thr$cutoff
-  
-  # save in results file
-  inv_sdm <-
-    inv_sdm %>%
-    bind_rows(
-      setNames(c(bind_rows(bm_FindOptimStat(metric.eval = "ROC",
-                                            sp_training$occ,
-                                            est),
-                           bm_FindOptimStat(metric.eval = "BOYCE",
-                                            sp_training$occ,
-                                            est),
-                           bm_FindOptimStat(metric.eval = "TSS",
-                                            sp_training$occ,
-                                            est)) %>%
-                   as_tibble() %>%
-                   pull(best.stat),
-                 block_size,
-                 k_value,
-                 thr$cutoff/1000,
-                 nrow(points_occ),
-                 inv_tax[[i]]),
-               names(inv_sdm))
-    )
   
   # convert current presence-absence map to polygon
   current <-
@@ -597,32 +605,31 @@ for (i in 1:length(inv_tax)) {
            paste("output/SDM/Current/Shapefiles/", inv_tax[[i]], ".shp", sep = ""))
   
   # plot presence/absence based on threshold under current climate conditions
-  pdf(paste("output/SDM/Current/Maps/", inv_tax[[i]], "_pa.pdf", sep = ""),
-      useDingbats = F)
-  print(
-    oz_map %>%
-      ggplot() +
-      geom_sf(aes(geometry = geometry), colour = NA) +
-      geom_sf(
-        data = current,
-        colour = NA,
-        fill = "purple"
-      ) +
-      geom_sf(
-        data = st_as_sf(
-          dplyr::filter(inv_points, Binomial == inv_tax[[i]]),
-          crs = st_crs(oz_map)
-        ),
-        size = .1
-      ) +
-      theme_bw() +
-      labs(
-        y = "Latitude",
-        x = "Longitude",
-        title = str_replace(inv_tax[i], "_", " ")
-      )
-  )
-  dev.off()
+  ggsave(paste("output/SDM/Current/Maps/", inv_tax[[i]], "_pa.pdf", sep = ""),
+         oz_map %>%
+           ggplot() +
+           geom_sf(aes(geometry = geometry), colour = NA) +
+           geom_sf(
+             data = current,
+             colour = NA,
+             fill = "purple"
+           ) +
+           geom_sf(
+             data = st_as_sf(
+               dplyr::filter(inv_points, Binomial == inv_tax[[i]]),
+               crs = st_crs(oz_map)
+             ),
+             size = .1
+           ) +
+           theme_bw() +
+           labs(
+             y = "Latitude",
+             x = "Longitude",
+             title = str_replace(inv_tax[i], "_", " ")
+           ),
+         width = 7,
+         height = 7,
+         units = "in")
   
   # make future predictions
   # over all 8 climate projections
@@ -680,21 +687,9 @@ for (i in 1:length(inv_tax)) {
          function(k) writeRaster(future_predictions[[k]][[2]],
                                  filename = paste0("temp_rast/", k, ".tif"),
                                  overwrite = T))
-  
-  # cleanup
-  rm(cl_f)
-  
-  cl_f <- makeCluster(3)
-  registerDoSNOW(cl_f)
-  
-  future_all <- foreach(scenario = 1:3,
-                        .packages = c("tidyverse", "sf", "terra"),
-                        .export = c("current", "landmasses",
-                                    "oz_map", "extant_buff",
-                                    "inv_tax", "models", "years"),
-                        .inorder = TRUE,
-                        .errorhandling = "pass",
-                        .verbose = FALSE) %dopar% {
+
+  future_all <- mclapply(1:3,
+                        function(scenario) {
                           
                           future_n <- list()
                           
@@ -791,8 +786,8 @@ for (i in 1:length(inv_tax)) {
                           }
                           
                           future_n
-                        }
-  stopCluster(cl_f)
+                        },
+                        mc.cores = 3)
   
   future <- bind_rows(future_all[[1]])
   future_maxdisp <- bind_rows(future_all[[3]])
@@ -851,93 +846,118 @@ for (i in 1:length(inv_tax)) {
   dev.off()
   
   # plot all future presence/absence maps
-  pdf(
-    paste("output/SDM/Future/Maps/", inv_tax[[i]], "_pa_meanDispersal.pdf", sep = ""),
-    useDingbats = F,
-    width = 20,
-    height = 14
-  )
-  print(
-    oz_map %>%
-      ggplot() +
-      geom_sf(aes(geometry = geometry), colour = NA) +
-      geom_sf(
-        data = future %>%
-          filter(Dispersal == "Mean"),
-        colour = NA,
-        fill = "purple"
-      ) +
-      theme_bw() +
-      facet_grid(cols = vars(Model),
-                 rows = vars(Year)) +
-      labs(
-        y = "Latitude",
-        x = "Longitude",
-        title = str_replace(inv_tax[i], "_", " ")
-      )
-  )
-  dev.off()
+  ggsave(paste("output/SDM/Future/Maps/", inv_tax[[i]], "_prob.pdf", sep = ""),
+         oz_map %>%
+           ggplot() +
+           geom_sf(aes(geometry = geometry), colour = NA) +
+           geom_raster(data = prf_df %>% drop_na(), aes(
+             x = x, y = y, fill = predicted_probability
+           )) +
+           theme_bw() +
+           scale_fill_gradientn(colours = viridis::viridis(99),
+                                name = "Predicted Habitat Suitability") +
+           facet_grid(cols = vars(model),
+                      rows = vars(year)) +
+           labs(
+             y = "Latitude",
+             x = "Longitude",
+             title = str_replace(inv_tax[i], "_", " ")
+           ),
+         width = 7,
+         height = 7,
+         units = "in")
   
-  pdf(
-    paste("output/SDM/Future/Maps/", inv_tax[[i]], "_pa_minDispersal.pdf", sep = ""),
-    useDingbats = F,
-    width = 20,
-    height = 14
-  )
-  print(
-    oz_map %>%
-      ggplot() +
-      geom_sf(aes(geometry = geometry), colour = NA) +
-      geom_sf(
-        data = future %>%
-          filter(Dispersal == "Min"),
-        colour = NA,
-        fill = "purple"
-      ) +
-      theme_bw() +
-      facet_grid(cols = vars(Model),
-                 rows = vars(Year)) +
-      labs(
-        y = "Latitude",
-        x = "Longitude",
-        title = str_replace(inv_tax[i], "_", " ")
-      )
-  )
-  dev.off()
+  # plot all future presence/absence maps
+  ggsave(paste("output/SDM/Future/Maps/", inv_tax[[i]], "_pa_meanDispersal.pdf", sep = ""),
+         oz_map %>%
+           ggplot() +
+           geom_sf(aes(geometry = geometry), colour = NA) +
+           geom_sf(
+             data = future %>%
+               filter(Dispersal == "Mean"),
+             colour = NA,
+             fill = "purple"
+           ) +
+           theme_bw() +
+           facet_grid(cols = vars(Model),
+                      rows = vars(Year)) +
+           labs(
+             y = "Latitude",
+             x = "Longitude",
+             title = str_replace(inv_tax[i], "_", " ")
+           ),
+         width = 7,
+         height = 7,
+         units = "in")
   
-  pdf(
-    paste("output/SDM/Future/Maps/", inv_tax[[i]], "_pa_maxDispersal.pdf", sep = ""),
-    useDingbats = F,
-    width = 20,
-    height = 14
-  )
-  print(
-    oz_map %>%
-      ggplot() +
-      geom_sf(aes(geometry = geometry), colour = NA) +
-      geom_sf(
-        data = future %>%
-          filter(Dispersal == "Max"),
-        colour = NA,
-        fill = "purple"
-      ) +
-      theme_bw() +
-      facet_grid(cols = vars(Model),
-                 rows = vars(Year)) +
-      labs(
-        y = "Latitude",
-        x = "Longitude",
-        title = str_replace(inv_tax[i], "_", " ")
-      )
-  )
-  dev.off()
+  ggsave(paste("output/SDM/Future/Maps/", inv_tax[[i]], "_pa_minDispersal.pdf", sep = ""),
+         oz_map %>%
+           ggplot() +
+           geom_sf(aes(geometry = geometry), colour = NA) +
+           geom_sf(
+             data = future %>%
+               filter(Dispersal == "Min"),
+             colour = NA,
+             fill = "purple"
+           ) +
+           theme_bw() +
+           facet_grid(cols = vars(Model),
+                      rows = vars(Year)) +
+           labs(
+             y = "Latitude",
+             x = "Longitude",
+             title = str_replace(inv_tax[i], "_", " ")
+           ),
+         width = 7,
+         height = 7,
+         units = "in")
+  
+  ggsave(paste("output/SDM/Future/Maps/", inv_tax[[i]], "_pa_maxDispersal.pdf", sep = ""),
+         oz_map %>%
+           ggplot() +
+           geom_sf(aes(geometry = geometry), colour = NA) +
+           geom_sf(
+             data = future %>%
+               filter(Dispersal == "Max"),
+             colour = NA,
+             fill = "purple"
+           ) +
+           theme_bw() +
+           facet_grid(cols = vars(Model),
+                      rows = vars(Year)) +
+           labs(
+             y = "Latitude",
+             x = "Longitude",
+             title = str_replace(inv_tax[i], "_", " ")
+           ),
+         width = 7,
+         height = 7,
+         units = "in")
   
   
   unlink("occ.inv", recursive = TRUE)
-}
 
-# export results files
-write_csv(inv_sdm, "output/SDM/inv_summary.csv")
-if(nrow(failed) > 0){
-  write_csv(failed, "output/SDM/inv_failed.csv")
+  # save in results file
+  stats <-
+    bind_rows(bm_FindOptimStat(metric.eval = "ROC",
+                               sp_training$occ,
+                               est),
+              bm_FindOptimStat(metric.eval = "BOYCE",
+                               sp_training$occ,
+                               est),
+              bm_FindOptimStat(metric.eval = "TSS",
+                               sp_training$occ,
+                               est)) %>%
+    as_tibble() %>%
+    pull(best.stat)
+  
+  tibble(AUC = stats[[1]],
+         BOYCE = stats[[2]],
+         TSS = stats[[3]],
+         block_size = block_size,
+         k = k_value,
+         threshold = thr$cutoff/1000,
+         n = nrow(points_occ),
+         Binomial = inv_tax[[i]]) %>%
+    write_csv("output/SDM/inv_summary.csv", append = T)
 }

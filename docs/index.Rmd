@@ -2,7 +2,7 @@
 title: "Over-the-horizon extinction risk analyses for Australian tetrapods"
 author:
  - Alex Slavenko^[alex.slavenko1@gmail.com]
-date: '2025-06-03'
+date: '2025-08-20'
 output: html_document
 ---
 
@@ -121,6 +121,7 @@ sel_logical = lengths(sel_oz) > 0
 # filter out polygons that don't intersect Australia, non-native species, then combine all polygons to create a single polygon per species
 mam_dist <- mam_shp[sel_logical,] %>%
   st_intersection(oz_map) %>%
+  filter(!Binomial == "Bos javanicus") %>% # introduced in Australia
   filter(presence == 1,
          origin %in% c(1, 2)) %>%
   group_by(binomial, category) %>%

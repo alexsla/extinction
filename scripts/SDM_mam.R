@@ -6,15 +6,16 @@ library(biomod2)
 library(blockCV)
 library(parallel)
 library(pbapply)
-library(doSNOW)
 
 unlink("occ.mam", recursive = TRUE)
 
+sf_use_s2(FALSE)
+
 cores = detectCores()
-cl <- cores - 1 ## set to use all but one thread - replace if necessary
+cl <- 20 ## set to use all but one thread - replace if necessary
 
 # import Australian mammal shapefiles
-mam_dist <- readRDS("data/mam_dist.RDS")
+mam_dist <- readRDS("data/mam_dist.rds")
 
 # create map of Australia
 oz_map <-
@@ -231,15 +232,16 @@ for (i in 1:length(mam_tax)) {
   cv_test_result <- tryCatch({
     cv_spatial_autocor(r = currentEnv, x = sp_training, column = "occ")
   }, error = function(e) {
-    cat("cv_spatial_autocor failed, using default size of 700000\n")
+    cat("cv_spatial_autocor failed, using default size\n")
     return(NULL)
   })
   
   # Set size based on whether cv_spatial_autocor succeeded
   if (is.null(cv_test_result)) {
-    block_size <- 700000
+    block_size <- mam_dist %>% filter(Binomial == mam_tax[[i]]) %>% st_area() %>% as.numeric() %>% sqrt() %>% round(0)
   } else {
-    block_size <- min(ceiling(cv_test_result$range/1000)*1000, 700000)
+    min_area <- mam_dist %>% filter(Binomial == mam_tax[[i]]) %>% st_area() %>% as.numeric() %>% sqrt() %>% round(0)
+    block_size <- min(ceiling(cv_test_result$range/1000)*1000, min_area)
   }
   
   # generate CV blocks
@@ -293,7 +295,7 @@ for (i in 1:length(mam_tax)) {
     current_warnings <- output$warnings
     
     # Check if there was a zero records warning
-    zero_records_warning <- grep("Fold .* has class\\(es\\) with zero records", current_warnings)
+    zero_records_warning <- grep("Fold.* .* ha(s|ve) class\\(es\\) with zero records", current_warnings)
     
     if (length(zero_records_warning) == 0) {
       # No zero records warning, we're successful
@@ -336,15 +338,38 @@ for (i in 1:length(mam_tax)) {
   colnames(spatial_cv_folds) <- paste0("_allData_RUN", 1:ncol(spatial_cv_folds))
   
   # generate SDMs (use bigboss settings)
-  biomod_model_out <- BIOMOD_Modeling(biomod_data,
-                                      models = c('GBM','GLM','GAM','MAXENT','RF'),
-                                      OPT.strategy = 'bigboss',
-                                      CV.strategy = 'user.defined',
-                                      CV.user.table = spatial_cv_folds,
-                                      metric.eval = 'TSS',
-                                      weights = wt,
-                                      seed.val = 42,
-                                      nb.cpu = cl)
+  biomod_model_out <- tryCatch({
+    BIOMOD_Modeling(biomod_data,
+                    models = c('GBM','GLM','GAM','MAXENT','RF'),
+                    OPT.strategy = 'bigboss',
+                    CV.strategy = 'user.defined',
+                    CV.user.table = spatial_cv_folds,
+                    metric.eval = 'TSS',
+                    weights = wt,
+                    seed.val = 42,
+                    nb.cpu = cl)
+  }, error = function(e) {
+    cat("Failed to fit SDMs.\n")
+    tibble(Binomial = mam_tax[[i]],
+           reason = "failed to fit SDMs") %>%
+      write_csv("output/SDM/mam_failed.csv", append = T)
+    tibble(AUC = NA,
+           BOYCE = NA,
+           TSS = NA,
+           block_size = NA,
+           k = NA,
+           threshold = NA,
+           n = nrow(points_occ),
+           Binomial = mam_tax[[i]]) %>%
+      write_csv("output/SDM/mam_summary.csv", append = T)
+    return(NULL)
+  })
+  
+  # Check if modeling failed and skip to next iteration
+  if (is.null(biomod_model_out)) {
+    unlink("occ.mam", recursive = TRUE)
+    next
+  }
   
   # generate ensemble model
   ens_model <- BIOMOD_EnsembleModeling(biomod_model_out,
@@ -352,6 +377,24 @@ for (i in 1:length(mam_tax)) {
                                        em.algo = 'EMwmean',
                                        metric.eval = 'TSS',
                                        metric.select.thresh = 0)
+
+  if(any(ens_model@em.models_kept == "none")) {
+    cat("All TSS values below 0.\n")
+    tibble(Binomial = mam_tax[[i]],
+           reason = "All TSS values below 0") %>%
+      write_csv("output/SDM/mam_failed.csv", append = T)
+    tibble(AUC = NA,
+           BOYCE = NA,
+           TSS = NA,
+           block_size = NA,
+           k = NA,
+           threshold = NA,
+           n = nrow(points_occ),
+           Binomial = mam_tax[[i]]) %>%
+      write_csv("output/SDM/mam_summary.csv", append = T)
+    unlink("occ.mam", recursive = TRUE)
+    next
+  }
   
   # plot partial response curves
   ggsave(paste("output/SDM/Response Curves/", mam_tax[[i]], ".pdf", sep = ""),
@@ -370,7 +413,7 @@ for (i in 1:length(mam_tax)) {
   mods <- mods[names(mods) %in% ens_model@em.models_kept]
   
   weights <- sapply(1:length(mods), function(x) mods[[x]]@model_evaluation[,6])
-  weights <- round(weights/sum(weights, na.rm = TRUE), digits = 3)
+  weights <- weights/sum(weights, na.rm = TRUE)
   
   # Create temporary directory for parallel predictions
   temp_pred_dir <- tempdir()
@@ -578,20 +621,8 @@ for (i in 1:length(mam_tax)) {
                                  filename = paste0("temp_rast/", k, ".tif"),
                                  overwrite = T))
   
-  # cleanup
-  rm(cl_f)
-  
-  cl_f <- makeCluster(3)
-  registerDoSNOW(cl_f)
-  
-  future_all <- foreach(scenario = 1:3,
-                        .packages = c("tidyverse", "sf", "terra"),
-                        .export = c("current", "landmasses",
-                                    "oz_map", "extant_buff",
-                                    "mam_tax", "models", "years"),
-                        .inorder = TRUE,
-                        .errorhandling = "pass",
-                        .verbose = FALSE) %dopar% {
+  future_all <- mclapply(1:3,
+                        function(scenario) {
                           
                           future_n <- list()
                           
@@ -688,8 +719,8 @@ for (i in 1:length(mam_tax)) {
                           }
                           
                           future_n
-                        }
-  stopCluster(cl_f)
+                        },
+                        mc.cores = 3)
   
   future <- bind_rows(future_all[[1]])
   future_maxdisp <- bind_rows(future_all[[3]])
