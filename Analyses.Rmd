@@ -2,7 +2,7 @@
 title: "Over-the-horizon extinction risk analyses for Australian tetrapods"
 author:
  - Alex Slavenko^[alex.slavenko1@gmail.com]
-date: '2025-08-20'
+date: '2025-08-24'
 output: html_document
 ---
 
@@ -1492,6 +1492,8 @@ tet_data <- tet_data %>%
   ) %>%
   dplyr::select(-c(pred_real, area_iucn)) %>%
   drop_na(Mass)
+
+tet_data %>% write_csv("output/AA/tet_data_AA.csv")
 
 # combine all data and omit species without ranges
 tet_all <- bind_rows(tet_current, tet_future) %>%
@@ -4189,9 +4191,16 @@ as_tibble(TukeyHSD(aov(Gain ~ Type, features))$Type, rownames = "comparison") %>
   gt::gtsave(filename = "features_tukey.docx", path = "output")
 
 # run sensitivity analyses on omitted species
+drop_sp <-
+  read_csv("output/AA/tet_data_AA.csv") %>%
+    filter(is.na(Model) & category %in% c("DD", "NE")) %>%
+    pull(Binomial)
+
 tet_omitted <- tet_dist %>%
   left_join(read_csv("output/SDM/tet_summary.csv")) %>%
-  filter(is.na(threshold)) %>%
+  filter(Binomial %in%
+           drop_sp |
+           is.na(threshold)) %>%
   as_tibble() %>%
   dplyr::select(Binomial, category) %>%
   mutate(
