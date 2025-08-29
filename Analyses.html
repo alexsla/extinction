@@ -11,7 +11,7 @@
 
 <meta name="author" content="Alex Slavenko" />
 
-<meta name="date" content="2025-08-24" />
+<meta name="date" content="2025-08-29" />
 
 <title>Over-the-horizon extinction risk analyses for Australian tetrapods</title>
 
@@ -353,7 +353,7 @@ display: none;
 <h1 class="title toc-ignore">Over-the-horizon extinction risk analyses
 for Australian tetrapods</h1>
 <h4 class="author">Alex Slavenko<a href="#fn1" class="footnote-ref" id="fnref1"><sup>1</sup></a></h4>
-<h4 class="date">2025-08-24</h4>
+<h4 class="date">2025-08-29</h4>
 
 </div>
 
@@ -1381,7 +1381,7 @@ for (i in 1:8) {
       } else {
         tet_lu_temp[[x]] &lt;-
           st_as_sf(stars::st_as_stars(mask(
-            lu.temp &gt;= 0.5, as(tet.temp[x,], &quot;Spatial&quot;)
+            lu.temp &gt;= 0.5, as(tet_current[x,], &quot;Spatial&quot;)
           )),
           as_points = FALSE,
           merge = TRUE) %&gt;%
@@ -1389,15 +1389,13 @@ for (i in 1:8) {
           st_transform(
             &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
           ) %&gt;%
-          mutate(
-            Binomial = tet.temp[x,]$Binomial,
-            lu = 0,
-            Model = tet.temp[x,]$Model,
-            Year = tet.temp[x,]$Year,
-            Dispersal = tet.temp[x,]$Dispersal
-          ) %&gt;%
+          mutate(lu = as.numeric(units::set_units(st_area(geometry), &quot;km2&quot;)),
+                 Binomial = tet_current[x,]$Binomial) %&gt;%
           as_tibble() %&gt;%
-          dplyr::select(Binomial, lu, Model, Year, Dispersal) 
+          dplyr::select(Binomial, lu) %&gt;%
+          mutate(Model = tet.temp[x,]$Model,
+                 Year = tet.temp[x,]$Year,
+                 Dispersal = tet.temp[x,]$Dispersal)
       }
     }
   }
@@ -1486,7 +1484,7 @@ for (i in 1:8) {
       } else {
         tet_hp_temp[[x]] &lt;-
           st_as_sf(stars::st_as_stars(mask(
-            hp.temp &gt;= 100, as(tet.temp[x,], &quot;Spatial&quot;)
+            hp.temp &gt;= 100, as(tet_current[x,], &quot;Spatial&quot;)
           )),
           as_points = FALSE,
           merge = TRUE) %&gt;%
@@ -1494,15 +1492,13 @@ for (i in 1:8) {
           st_transform(
             &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
           ) %&gt;%
-          mutate(
-            Binomial = tet.temp[x,]$Binomial,
-            hp = 0,
-            Model = tet.temp[x,]$Model,
-            Year = tet.temp[x,]$Year,
-            Dispersal = tet.temp[x,]$Dispersal
-          ) %&gt;%
+          mutate(hp = as.numeric(units::set_units(st_area(geometry), &quot;km2&quot;)),
+                 Binomial = tet_current[x,]$Binomial) %&gt;%
           as_tibble() %&gt;%
-          dplyr::select(Binomial, hp, Model, Year, Dispersal) 
+          dplyr::select(Binomial, hp) %&gt;%
+          mutate(Model = tet.temp[x,]$Model,
+                 Year = tet.temp[x,]$Year,
+                 Dispersal = tet.temp[x,]$Dispersal)
       }
     }
   }
@@ -1910,27 +1906,6 @@ tet_data &lt;- tet_data %&gt;%
 
 tet_data %&gt;% write_csv(&quot;output/AA/tet_data_AA.csv&quot;)
 
-# combine all data and omit species without ranges
-tet_all &lt;- bind_rows(tet_current, tet_future) %&gt;%
-  filter(Binomial %in% tet_data$Binomial) %&gt;%
-  mutate(
-    id = str_replace(paste(Binomial, Model, Dispersal, Year, sep = &quot;_&quot;), &quot;NA_NA_NA&quot;, &quot;2020&quot;),
-    Model = case_when(is.na(Model) ~ &quot;current&quot;,
-                      TRUE ~ Model),
-    Year = case_when(is.na(Year) ~ &quot;current&quot;,
-                     TRUE ~ Year),
-    Dispersal = case_when(is.na(Dispersal) ~ &quot;current&quot;,
-                          TRUE ~ Dispersal)
-  )
-
-tet_all_sp &lt;- st_centroid(tet_all)
-
-empty &lt;- which(is.na(st_coordinates(tet_all_sp)))
-if (length(empty) &gt; 0) {
-  tet_all_sp &lt;- tet_all_sp[-empty,]
-  tet_all &lt;- tet_all[-empty,]
-}
-
 # format for xgboost
 pred &lt;- tet_data %&gt;% filter(Year == 2010) %&gt;% dplyr::select(-c(Binomial, Year, Model, Dispersal)) %&gt;% as.data.frame()
 
@@ -2006,7 +1981,7 @@ table(pred_thrt[, c(cat, &quot;class&quot;, &quot;biome&quot;)])
 
 #create even folds
 # set seed for reproducibility
-folds &lt;- even_folds(pred_thrt, cat, 5, 3, seed)
+folds &lt;- even_folds(pred_thrt, cat, 4, 2, seed)
 
 #define response variable
 y &lt;- pred_thrt[, cat]
@@ -2563,9 +2538,26 @@ tet_iucn %&gt;%
     category = case_when(is.na(category) ~ &quot;EX&quot;,
                          TRUE ~ category),
     category = factor(category, levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;, &quot;EX&quot;)),
-    Dispersal = factor(Dispersal, levels = c(&quot;Min&quot;, &quot;Mean&quot;, &quot;Max&quot;))
+    Dispersal = factor(Dispersal, levels = c(&quot;Current&quot;, &quot;Min&quot;, &quot;Mean&quot;, &quot;Max&quot;), labels = c(&quot;Current&quot;, &quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))
   ) %&gt;%
   filter(!category %in% c(&quot;LC&quot;, &quot;NT&quot;)) %&gt;%
+  bind_rows(lapply(1:2, function(i)
+    tet_iucn %&gt;%
+      group_by(Year, Model, Dispersal, Class) %&gt;%
+      count(category) %&gt;%
+      filter(Year == 2010) %&gt;%
+      mutate(
+        Year = 2020,
+        Model = unique(models)[[i]],
+        Dispersal = &quot;Current&quot;
+      ) %&gt;%
+      mutate(
+        category = case_when(is.na(category) ~ &quot;EX&quot;,
+                             TRUE ~ category),
+        category = factor(category, levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;, &quot;EX&quot;)),
+        Dispersal = factor(Dispersal, levels = c(&quot;Current&quot;, &quot;Min&quot;, &quot;Mean&quot;, &quot;Max&quot;), labels = c(&quot;Current&quot;, &quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))
+      ) %&gt;%
+      filter(!category %in% c(&quot;LC&quot;, &quot;NT&quot;)))) %&gt;%
   ggplot(aes(x = interaction(Dispersal, as.character(Year)), y = n, fill = category)) +
   geom_bar(stat = &quot;identity&quot;) +
   facet_grid(cols = vars(Model),
@@ -2576,7 +2568,8 @@ tet_iucn %&gt;%
   scale_x_discrete(guide = &quot;axis_nested&quot;) +
   labs(x = &quot;Dispersal / Year&quot;, y = &quot;Number of Species&quot;) +
   theme_bw() +
-  theme(legend.position = &quot;bottom&quot;)
+  theme(legend.position = &quot;bottom&quot;,
+        axis.text.x = element_text(angle = 45, hjust = 1))
 
 ggsave(&quot;output/tet_thrt.pdf&quot;, width = 16, height = 8, scale = .8)
 
@@ -2655,50 +2648,51 @@ polr_tab %&gt;%
   flextable::save_as_docx(path = &quot;output/polr.docx&quot;)
 
 tet_directions_sum %&gt;%
-  ungroup() %&gt;%
-  mutate(
-    LC = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 1],
-    NT = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 2],
-    VU = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 3],
-    EN = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 4],
-    EX = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 5]
-  ) %&gt;%
-  gather(cat, prob, c(LC, NT, VU, EN, EX)) %&gt;%
-  select(Binomial, cat_lag, prob, cat, Model, Class) %&gt;%
-  drop_na() %&gt;%
-  ggplot(aes(
-    x = as.numeric(as.character(cat_lag)),
-    y = prob,
-    color = factor(cat, levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN&quot;, &quot;EX&quot;)),
-    fill = factor(cat, levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN&quot;, &quot;EX&quot;))
-  )) +
-  geom_smooth(method = &quot;gam&quot;, formula = y ~ s(x, k = 3)) +
-  theme_bw() +
-  scale_x_continuous(name = &quot;IUCN category in previous timestep&quot;,
-                     labels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;)) +
-  scale_fill_manual(
-    values = c(&quot;lightgrey&quot;,
-               &quot;darkgoldenrod1&quot;,
-               &quot;brown1&quot;,
-               &quot;darkred&quot;,
-               &quot;black&quot;),
-    labels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;, &quot;EX&quot;),
-    name = &quot;IUCN Category&quot;
-  ) +
-  scale_colour_manual(
-    values = c(&quot;lightgrey&quot;,
-               &quot;darkgoldenrod1&quot;,
-               &quot;brown1&quot;,
-               &quot;darkred&quot;,
-               &quot;black&quot;),
-    labels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;, &quot;EX&quot;),
-    name = &quot;IUCN Category&quot;
-  ) +
-  ylab(&quot;Predicted Probability&quot;) +
-  facet_wrap(~Class,
-             nrow = 2)
+    ungroup() %&gt;%
+    mutate(
+        LC = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 1],
+        NT = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 2],
+        VU = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 3],
+        EN = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 4],
+        EX = predict(m, tet_directions_sum, type = &quot;p&quot;)[, 5]
+    ) %&gt;%
+    gather(cat, prob, c(LC, NT, VU, EN, EX)) %&gt;%
+    select(cat_lag, prob, cat, Model, Class) %&gt;%
+    unique() %&gt;%
+    drop_na() %&gt;%
+    ggplot(aes(
+        x = as.numeric(as.character(cat_lag)),
+        y = prob,
+        color = factor(cat, levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN&quot;, &quot;EX&quot;)),
+        fill = factor(cat, levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN&quot;, &quot;EX&quot;))
+    )) +
+    geom_smooth(method = &quot;gam&quot;, formula = y ~ s(x, k = 3)) +
+    theme_bw() +
+    scale_x_continuous(name = &quot;IUCN category in previous timestep&quot;,
+                       labels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;)) +
+    scale_fill_manual(
+        values = c(&quot;lightgrey&quot;,
+                   &quot;darkgoldenrod1&quot;,
+                   &quot;brown1&quot;,
+                   &quot;darkred&quot;,
+                   &quot;black&quot;),
+        labels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;, &quot;EX&quot;),
+        name = &quot;IUCN Category&quot;
+    ) +
+    scale_colour_manual(
+        values = c(&quot;lightgrey&quot;,
+                   &quot;darkgoldenrod1&quot;,
+                   &quot;brown1&quot;,
+                   &quot;darkred&quot;,
+                   &quot;black&quot;),
+        labels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;, &quot;EX&quot;),
+        name = &quot;IUCN Category&quot;
+    ) +
+    ylab(&quot;Predicted Probability&quot;) +
+    facet_wrap(~Class,
+               nrow = 2)
 
-ggsave(&quot;output/predicted_prob.pdf&quot;)
+ggsave(&quot;output/predicted_prob.pdf&quot;, width = 16, scale = .8)
 
 # prepare data for sankey plots
 dat_ssp1 &lt;- bind_rows(
@@ -2712,8 +2706,8 @@ dat_ssp1 &lt;- bind_rows(
         pivot_wider(names_from = &quot;Year&quot;, values_from = &quot;category&quot;) %&gt;%
         select(Binomial, `2040`, `2060`, `2080`, `2100`)
     ) %&gt;%
-    select(Binomial, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
-    mutate_at(c(2:6), ~ replace_na(., &quot;EX&quot;)) %&gt;%
+    select(Binomial, `2020`, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
+    mutate_at(c(2:7), ~ replace_na(., &quot;EX&quot;)) %&gt;%
     mutate(Dispersal = &quot;Min&quot;),
   tet_iucn %&gt;%
     filter(is.na(Model)) %&gt;%
@@ -2725,8 +2719,8 @@ dat_ssp1 &lt;- bind_rows(
         pivot_wider(names_from = &quot;Year&quot;, values_from = &quot;category&quot;) %&gt;%
         select(Binomial, `2040`, `2060`, `2080`, `2100`)
     ) %&gt;%
-    select(Binomial, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
-    mutate_at(c(2:6), ~ replace_na(., &quot;EX&quot;)) %&gt;%
+    select(Binomial, `2020`, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
+    mutate_at(c(2:7), ~ replace_na(., &quot;EX&quot;)) %&gt;%
     mutate(Dispersal = &quot;Mean&quot;),
   tet_iucn %&gt;%
     filter(is.na(Model)) %&gt;%
@@ -2738,8 +2732,8 @@ dat_ssp1 &lt;- bind_rows(
         pivot_wider(names_from = &quot;Year&quot;, values_from = &quot;category&quot;) %&gt;%
         select(Binomial, `2040`, `2060`, `2080`, `2100`)
     ) %&gt;%
-    select(Binomial, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
-    mutate_at(c(2:6), ~ replace_na(., &quot;EX&quot;)) %&gt;%
+    select(Binomial, `2020`, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
+    mutate_at(c(2:7), ~ replace_na(., &quot;EX&quot;)) %&gt;%
     mutate(Dispersal = &quot;Max&quot;)
 )
 
@@ -2754,8 +2748,8 @@ dat_ssp5 &lt;- bind_rows(
         pivot_wider(names_from = &quot;Year&quot;, values_from = &quot;category&quot;) %&gt;%
         select(Binomial, `2040`, `2060`, `2080`, `2100`)
     ) %&gt;%
-    select(Binomial, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
-    mutate_at(c(2:6), ~ replace_na(., &quot;EX&quot;)) %&gt;%
+    select(Binomial, `2020`, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
+    mutate_at(c(2:7), ~ replace_na(., &quot;EX&quot;)) %&gt;%
     mutate(Dispersal = &quot;Min&quot;),
   tet_iucn %&gt;%
     filter(is.na(Model)) %&gt;%
@@ -2767,8 +2761,8 @@ dat_ssp5 &lt;- bind_rows(
         pivot_wider(names_from = &quot;Year&quot;, values_from = &quot;category&quot;) %&gt;%
         select(Binomial, `2040`, `2060`, `2080`, `2100`)
     ) %&gt;%
-    select(Binomial, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
-    mutate_at(c(2:6), ~ replace_na(., &quot;EX&quot;)) %&gt;%
+    select(Binomial, `2020`, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
+    mutate_at(c(2:7), ~ replace_na(., &quot;EX&quot;)) %&gt;%
     mutate(Dispersal = &quot;Mean&quot;),
   tet_iucn %&gt;%
     filter(is.na(Model)) %&gt;%
@@ -2780,16 +2774,16 @@ dat_ssp5 &lt;- bind_rows(
         pivot_wider(names_from = &quot;Year&quot;, values_from = &quot;category&quot;) %&gt;%
         select(Binomial, `2040`, `2060`, `2080`, `2100`)
     ) %&gt;%
-    select(Binomial, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
-    mutate_at(c(2:6), ~ replace_na(., &quot;EX&quot;)) %&gt;%
+    select(Binomial, `2020`, `2040`, `2060`, `2080`, `2100`, Class) %&gt;%
+    mutate_at(c(2:7), ~ replace_na(., &quot;EX&quot;)) %&gt;%
     mutate(Dispersal = &quot;Max&quot;)
 )
 
 # generate sankey plots
 dat_ssp1 %&gt;%
   filter(Dispersal == &quot;Min&quot;) %&gt;%
-  make_long(`2040`, `2060`, `2080`, `2100`) %&gt;%
-  mutate(Class = rep(dat_ssp1[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 4)) %&gt;%
+  make_long(`2020`, `2040`, `2060`, `2080`, `2100`) %&gt;%
+  mutate(Class = rep(dat_ssp1[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 5)) %&gt;%
   ggplot(
     aes(
       x = x,
@@ -2815,7 +2809,7 @@ dat_ssp1 %&gt;%
   ) +
   scale_colour_manual(values = c(&quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;white&quot;)) +
   labs(x = &quot;Year&quot;,
-       title = &quot;Sustainability (SSP1.26), Minimal dispersal&quot;) +
+       title = &quot;Sustainability (SSP1.26), No dispersal&quot;) +
   theme(legend.position = &quot;none&quot;) +
   facet_wrap( ~ Class, scales = &quot;free&quot;,
               nrow = 2)
@@ -2824,8 +2818,8 @@ ggsave(&quot;output/ssp1_min.pdf&quot;, limitsize = F)
 
 dat_ssp1 %&gt;%
   filter(Dispersal == &quot;Mean&quot;) %&gt;%
-  make_long(`2040`, `2060`, `2080`, `2100`) %&gt;%
-  mutate(Class = rep(dat_ssp1[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 4)) %&gt;%
+  make_long(`2020`, `2040`, `2060`, `2080`, `2100`) %&gt;%
+  mutate(Class = rep(dat_ssp1[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 5)) %&gt;%
   ggplot(
     aes(
       x = x,
@@ -2851,7 +2845,7 @@ dat_ssp1 %&gt;%
   ) +
   scale_colour_manual(values = c(&quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;white&quot;)) +
   labs(x = &quot;Year&quot;,
-       title = &quot;Sustainability (SSP1.26), Mean dispersal&quot;) +
+       title = &quot;Sustainability (SSP1.26), Limited dispersal&quot;) +
   theme(legend.position = &quot;none&quot;) +
   facet_wrap( ~ Class, scales = &quot;free&quot;,
               nrow = 2)
@@ -2860,8 +2854,8 @@ ggsave(&quot;output/ssp1_mean.pdf&quot;, limitsize = F)
 
 dat_ssp1 %&gt;%
   filter(Dispersal == &quot;Max&quot;) %&gt;%
-  make_long(`2040`, `2060`, `2080`, `2100`) %&gt;%
-  mutate(Class = rep(dat_ssp1[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 4)) %&gt;%
+  make_long(`2020`, `2040`, `2060`, `2080`, `2100`) %&gt;%
+  mutate(Class = rep(dat_ssp1[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 5)) %&gt;%
   ggplot(
     aes(
       x = x,
@@ -2887,7 +2881,7 @@ dat_ssp1 %&gt;%
   ) +
   scale_colour_manual(values = c(&quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;white&quot;)) +
   labs(x = &quot;Year&quot;,
-       title = &quot;Sustainability (SSP1.26), Maximal dispersal&quot;) +
+       title = &quot;Sustainability (SSP1.26), Limitless dispersal&quot;) +
   theme(legend.position = &quot;none&quot;) +
   facet_wrap( ~ Class, scales = &quot;free&quot;,
               nrow = 2)
@@ -2896,8 +2890,8 @@ ggsave(&quot;output/ssp1_max.pdf&quot;, limitsize = F)
 
 dat_ssp5 %&gt;%
   filter(Dispersal == &quot;Min&quot;) %&gt;%
-  make_long(`2040`, `2060`, `2080`, `2100`) %&gt;%
-  mutate(Class = rep(dat_ssp5[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 4)) %&gt;%
+  make_long(`2020`, `2040`, `2060`, `2080`, `2100`) %&gt;%
+  mutate(Class = rep(dat_ssp5[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 5)) %&gt;%
   ggplot(
     aes(
       x = x,
@@ -2923,7 +2917,7 @@ dat_ssp5 %&gt;%
   ) +
   scale_colour_manual(values = c(&quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;white&quot;)) +
   labs(x = &quot;Year&quot;,
-       title = &quot;Fossil-fuelled development (SSP5.85), Minimal dispersal&quot;) +
+       title = &quot;Fossil-fuelled development (SSP5.85), No dispersal&quot;) +
   theme(legend.position = &quot;none&quot;) +
   facet_wrap( ~ Class, scales = &quot;free&quot;,
               nrow = 2)
@@ -2932,8 +2926,8 @@ ggsave(&quot;output/ssp5_min.pdf&quot;, limitsize = F)
 
 dat_ssp5 %&gt;%
   filter(Dispersal == &quot;Mean&quot;) %&gt;%
-  make_long(`2040`, `2060`, `2080`, `2100`) %&gt;%
-  mutate(Class = rep(dat_ssp5[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 4)) %&gt;%
+  make_long(`2020`, `2040`, `2060`, `2080`, `2100`) %&gt;%
+  mutate(Class = rep(dat_ssp5[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 5)) %&gt;%
   ggplot(
     aes(
       x = x,
@@ -2959,7 +2953,7 @@ dat_ssp5 %&gt;%
   ) +
   scale_colour_manual(values = c(&quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;white&quot;)) +
   labs(x = &quot;Year&quot;,
-       title = &quot;Fossil-fuelled development (SSP5.85), Mean dispersal&quot;) +
+       title = &quot;Fossil-fuelled development (SSP5.85), Limited dispersal&quot;) +
   theme(legend.position = &quot;none&quot;) +
   facet_wrap( ~ Class, scales = &quot;free&quot;,
               nrow = 2)
@@ -2968,8 +2962,8 @@ ggsave(&quot;output/ssp5_mean.pdf&quot;, limitsize = F)
 
 dat_ssp5 %&gt;%
   filter(Dispersal == &quot;Max&quot;) %&gt;%
-  make_long(`2040`, `2060`, `2080`, `2100`) %&gt;%
-  mutate(Class = rep(dat_ssp5[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 4)) %&gt;%
+  make_long(`2020`, `2040`, `2060`, `2080`, `2100`) %&gt;%
+  mutate(Class = rep(dat_ssp5[1:dim(tet_iucn %&gt;% filter(Year == 2010))[1], ]$Class, each = 5)) %&gt;%
   ggplot(
     aes(
       x = x,
@@ -2995,7 +2989,7 @@ dat_ssp5 %&gt;%
   ) +
   scale_colour_manual(values = c(&quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;black&quot;, &quot;white&quot;)) +
   labs(x = &quot;Year&quot;,
-       title = &quot;Fossil-fuelled development (SSP5.85), Maximal dispersal&quot;) +
+       title = &quot;Fossil-fuelled development (SSP5.85), Limitless dispersal&quot;) +
   theme(legend.position = &quot;none&quot;) +
   facet_wrap( ~ Class, scales = &quot;free&quot;,
               nrow = 2)
@@ -3014,9 +3008,23 @@ biomes &lt;- read_sf(&quot;data/RAW/wwf_terr_ecos.shp&quot;) %&gt;%
   dplyr::select(BIOME) %&gt;%
   mutate(BIOME = as.factor(BIOME))
 
+# create map extent (exclude Norfolk Island and Heard &amp; McDonald)
+map_ext &lt;-
+  (oz_map %&gt;%
+     st_transform(
+       &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+     ) %&gt;%
+     st_cast(&quot;POLYGON&quot;))[
+       -c(which.min((oz_map %&gt;% st_cast(&quot;POLYGON&quot;) %&gt;% st_centroid() %&gt;% st_coordinates())[,2]),
+          which.max((oz_map %&gt;% st_cast(&quot;POLYGON&quot;) %&gt;% st_centroid() %&gt;% st_coordinates())[,1])),
+     ] %&gt;% st_bbox
+
 # generate map of biomes
 biomes %&gt;%
   filter(!BIOME == 11) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  ) %&gt;%
   ggplot() +
   geom_sf(aes(fill = factor(
     BIOME,
@@ -3083,7 +3091,7 @@ tet_data %&gt;%
        y = &quot;Range Size (km2)&quot;) +
   theme(legend.position = &quot;none&quot;)
 
-ggplot2::ggsave(&quot;output/extinct_range.pdf&quot;)
+ggplot2::ggsave(&quot;output/extinct_range.pdf&quot;, width = 4)
 
 # plot barplot of distribution of species predicted to go extinct per biome
 tet_data %&gt;%
@@ -3121,20 +3129,22 @@ tet_data %&gt;%
 
 ggplot2::ggsave(&quot;output/extinct_biomes.pdf&quot;)
 
-# create map extent (exclude Norfolk Island and Heard &amp; McDonald)
-map_ext &lt;-
-  (oz_map %&gt;%
-     st_cast(&quot;POLYGON&quot;))[
-       -c(which.min((oz_map %&gt;% st_cast(&quot;POLYGON&quot;) %&gt;% st_centroid() %&gt;% st_coordinates())[,2]),
-          which.max((oz_map %&gt;% st_cast(&quot;POLYGON&quot;) %&gt;% st_centroid() %&gt;% st_coordinates())[,1])),
-     ] %&gt;% st_bbox
-
 # plot map of species predicted to go extinct
 future_extinct &lt;- tet_current %&gt;%
   left_join(tet_iucn %&gt;%
               filter(category == &quot;EX&quot;)) %&gt;%
   filter(!is.na(category)) %&gt;%
-  mutate(Model = paste0(Model, &quot;, &quot;, Dispersal, &quot; Dispersal&quot;)) %&gt;%
+  mutate(Dispersal = case_when(Dispersal == &quot;Min&quot; ~ &quot;No&quot;,
+                               Dispersal == &quot;Mean&quot; ~ &quot;Limited&quot;,
+                               Dispersal == &quot;Max&quot; ~ &quot;Limitless&quot;),
+         Model = paste0(Model, &quot;, &quot;, Dispersal, &quot; dispersal&quot;),
+         Model = factor(Model,
+                        levels = c(&quot;SSP1.26, No dispersal&quot;,
+                                   &quot;SSP1.26, Limited dispersal&quot;,
+                                   &quot;SSP1.26, Limitless dispersal&quot;,
+                                   &quot;SSP5.85, No dispersal&quot;,
+                                   &quot;SSP5.85, Limited dispersal&quot;,
+                                   &quot;SSP5.85, Limitless dispersal&quot;))) %&gt;%
   st_transform(
     &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
   ) %&gt;%
@@ -3142,8 +3152,8 @@ future_extinct &lt;- tet_current %&gt;%
   geom_sf(data = oz_map,
           fill = &quot;white&quot;,
           colour = &quot;grey&quot;) +
-  geom_sf(fill = &quot;black&quot;, colour = NA) +
-  theme_void() +
+  geom_sf(fill = &quot;black&quot;, colour = NA, alpha = .1) +
+  theme_bw() +
   facet_grid(rows = vars(Year), cols = vars(Model)) +
   coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
            ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
@@ -3172,8 +3182,14 @@ thrt_rich_current %&gt;%
   filter(!is.na(Class)) %&gt;%
   group_by(Class) %&gt;%
   mutate(num_thrt = num_thrt / max(num_thrt)) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  ) %&gt;%
   ggplot() +
-  geom_sf(data = oz_map, fill = &quot;white&quot;) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = &quot;white&quot;) +
   geom_sf(aes(fill = num_thrt), colour = NA) +
   geom_sf(
     fill = NA,
@@ -3183,9 +3199,15 @@ thrt_rich_current %&gt;%
       filter(!is.na(Class)) %&gt;%
       group_by(Class) %&gt;%
       filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-      summarise()
+      summarise() %&gt;%
+      st_transform(
+        &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+      )
   ) +
-  geom_sf(data = oz_map, fill = NA) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = NA) +
   facet_wrap( ~ Class, ncol = 4) +
   theme_bw() +
   scale_fill_gradient(low = &quot;grey90&quot;,
@@ -3205,8 +3227,14 @@ thrt_rich_future %&gt;%
   ungroup() %&gt;%
   group_by(Model, Class) %&gt;%
   mutate(num_thrt = num_thrt / max(num_thrt)) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  ) %&gt;%
   ggplot() +
-  geom_sf(data = oz_map, fill = &quot;white&quot;) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = &quot;white&quot;) +
   geom_sf(aes(fill = num_thrt), colour = NA) +
   geom_sf(
     fill = NA,
@@ -3220,9 +3248,15 @@ thrt_rich_future %&gt;%
         Year == &quot;2100&quot;,
         Dispersal == &quot;Min&quot;
       ) %&gt;%
-      summarise()
+      summarise() %&gt;%
+      st_transform(
+        &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+      )
   ) +
-  geom_sf(data = oz_map, fill = NA) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = NA) +
   facet_wrap(Model ~ Class, ncol = 4) +
   theme_bw() +
   scale_fill_gradient(low = &quot;grey90&quot;,
@@ -3243,8 +3277,14 @@ thrt_rich_future %&gt;%
   ungroup() %&gt;%
   group_by(Model, Class) %&gt;%
   mutate(num_thrt = num_thrt / max(num_thrt)) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  ) %&gt;%
   ggplot() +
-  geom_sf(data = oz_map, fill = &quot;white&quot;) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = &quot;white&quot;) +
   geom_sf(aes(fill = num_thrt), colour = NA) +
   geom_sf(
     fill = NA,
@@ -3258,9 +3298,15 @@ thrt_rich_future %&gt;%
         Year == &quot;2100&quot;,
         Dispersal == &quot;Mean&quot;
       ) %&gt;%
-      summarise()
+      summarise() %&gt;%
+      st_transform(
+        &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+      )
   ) +
-  geom_sf(data = oz_map, fill = NA) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = NA) +
   facet_wrap(Model ~ Class, ncol = 4) +
   theme_bw() +
   scale_fill_gradient(low = &quot;grey90&quot;,
@@ -3281,8 +3327,14 @@ thrt_rich_future %&gt;%
   ungroup() %&gt;%
   group_by(Model, Class) %&gt;%
   mutate(num_thrt = num_thrt / max(num_thrt)) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  ) %&gt;%
   ggplot() +
-  geom_sf(data = oz_map, fill = &quot;white&quot;) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = &quot;white&quot;) +
   geom_sf(aes(fill = num_thrt), colour = NA) +
   geom_sf(
     fill = NA,
@@ -3296,9 +3348,15 @@ thrt_rich_future %&gt;%
         Year == &quot;2100&quot;,
         Dispersal == &quot;Max&quot;
       ) %&gt;%
-      summarise()
+      summarise() %&gt;%
+      st_transform(
+        &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+      )
   ) +
-  geom_sf(data = oz_map, fill = NA) +
+  geom_sf(data = oz_map %&gt;%
+            st_transform(
+              &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+            ), fill = NA) +
   facet_wrap(Model ~ Class, ncol = 4) +
   theme_bw() +
   scale_fill_gradient(low = &quot;grey90&quot;,
@@ -3310,154 +3368,159 @@ thrt_rich_future %&gt;%
 
 ggsave(&quot;output/threat_hotspots_2100_maxdisp.pdf&quot;)
 
-
 plot_grid(
-  thrt_rich_current %&gt;%
-    filter(!is.na(Class)) %&gt;%
-    group_by(Class) %&gt;%
-    filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-    summarise() %&gt;%
-    st_intersection() %&gt;%
-    mutate(n.overlaps = factor(n.overlaps)) %&gt;%
-    ggplot() +
-    geom_sf(
-      data = oz_map  %&gt;%
-        st_transform(
-          &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
-        ),
-      colour = NA,
-      fill = &quot;white&quot;
-    ) +
-    geom_sf(
-      aes(fill = n.overlaps),
-      color = NA,
-      size = .1,
-      alpha = .8
-    ) +
-    geom_sf(
-      data = oz_map  %&gt;%
-        st_transform(
-          &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
-        ),
-      colour = &quot;black&quot;,
-      fill = NA,
-      size = .3
-    ) +
-    theme_bw() +
-    theme(legend.position = &quot;none&quot;) +
-    scale_fill_manual(
-      values = c(&quot;yellow&quot;, &quot;red&quot;, &quot;purple&quot;, &quot;black&quot;),
-      name = &quot;No. of classes&quot;
-    ),
-  bind_rows(
-    thrt_rich_future %&gt;%
-      filter(!is.na(Class)) %&gt;%
-      group_by(Class, Year, Model, Dispersal) %&gt;%
-      filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-      summarise() %&gt;%
-      ungroup() %&gt;%
-      filter(
-        Year == &quot;2100&quot;,
-        Model == &quot;SSP1.26&quot;,
-        Dispersal == &quot;Min&quot;
-      ) %&gt;%
-      st_intersection(),
-    thrt_rich_future %&gt;%
-      filter(!is.na(Class)) %&gt;%
-      group_by(Class, Year, Model, Dispersal) %&gt;%
-      filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-      summarise() %&gt;%
-      ungroup() %&gt;%
-      filter(
-        Year == &quot;2100&quot;,
-        Model == &quot;SSP5.85&quot;,
-        Dispersal == &quot;Min&quot;
-      ) %&gt;%
-      st_intersection(),
-    thrt_rich_future %&gt;%
-      filter(!is.na(Class)) %&gt;%
-      group_by(Class, Year, Model, Dispersal) %&gt;%
-      filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-      summarise() %&gt;%
-      ungroup() %&gt;%
-      filter(
-        Year == &quot;2100&quot;,
-        Model == &quot;SSP1.26&quot;,
-        Dispersal == &quot;Mean&quot;
-      ) %&gt;%
-      st_intersection(),
-    thrt_rich_future %&gt;%
-      filter(!is.na(Class)) %&gt;%
-      group_by(Class, Year, Model, Dispersal) %&gt;%
-      filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-      summarise() %&gt;%
-      ungroup() %&gt;%
-      filter(
-        Year == &quot;2100&quot;,
-        Model == &quot;SSP5.85&quot;,
-        Dispersal == &quot;Mean&quot;
-      ) %&gt;%
-      st_intersection(),
-    thrt_rich_future %&gt;%
-      filter(!is.na(Class)) %&gt;%
-      group_by(Class, Year, Model, Dispersal) %&gt;%
-      filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-      summarise() %&gt;%
-      ungroup() %&gt;%
-      filter(
-        Year == &quot;2100&quot;,
-        Model == &quot;SSP1.26&quot;,
-        Dispersal == &quot;Max&quot;
-      ) %&gt;%
-      st_intersection(),
-    thrt_rich_future %&gt;%
-      filter(!is.na(Class)) %&gt;%
-      group_by(Class, Year, Model, Dispersal) %&gt;%
-      filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
-      summarise() %&gt;%
-      ungroup() %&gt;%
-      filter(
-        Year == &quot;2100&quot;,
-        Model == &quot;SSP5.85&quot;,
-        Dispersal == &quot;Max&quot;
-      ) %&gt;%
-      st_intersection()
-  ) %&gt;%
-    mutate(n.overlaps = factor(n.overlaps)) %&gt;%
-    ggplot() +
-    geom_sf(
-      data = oz_map  %&gt;%
-        st_transform(
-          &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
-        ),
-      colour = NA,
-      fill = &quot;white&quot;
-    ) +
-    geom_sf(
-      aes(fill = n.overlaps),
-      color = NA,
-      size = .1,
-      alpha = .8
-    ) +
-    geom_sf(
-      data = oz_map  %&gt;%
-        st_transform(
-          &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
-        ),
-      colour = &quot;black&quot;,
-      fill = NA,
-      size = .3
-    ) +
-    theme_void() +
-    facet_grid(cols = vars(Model), rows = vars(Dispersal)) +
-    theme(legend.position = &quot;right&quot;) +
-    scale_fill_manual(
-      values = c(&quot;yellow&quot;, &quot;red&quot;, &quot;purple&quot;, &quot;black&quot;),
-      name = &quot;No. of classes&quot;
-    ) +
-    coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
-             ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;])),
-  nrow = 1
+    thrt_rich_current %&gt;%
+        filter(!is.na(Class)) %&gt;%
+        group_by(Class) %&gt;%
+        filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
+        summarise() %&gt;%
+        st_intersection() %&gt;%
+        mutate(n.overlaps = factor(n.overlaps)) %&gt;%
+        ggplot() +
+        geom_sf(
+            data = oz_map  %&gt;%
+                st_transform(
+                    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+                ),
+            colour = NA,
+            fill = &quot;white&quot;
+        ) +
+        geom_sf(
+            aes(fill = n.overlaps),
+            color = NA,
+            size = .1,
+            alpha = .8
+        ) +
+        geom_sf(
+            data = oz_map  %&gt;%
+                st_transform(
+                    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+                ),
+            colour = &quot;black&quot;,
+            fill = NA,
+            size = .3
+        ) +
+        theme_bw() +
+        theme(legend.position = &quot;none&quot;) +
+        scale_fill_manual(
+            values = c(&quot;yellow&quot;, &quot;red&quot;, &quot;purple&quot;, &quot;black&quot;),
+            name = &quot;No. of classes&quot;
+        ) +
+        coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+                 ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;])),
+    bind_rows(
+        thrt_rich_future %&gt;%
+            filter(!is.na(Class)) %&gt;%
+            group_by(Class, Year, Model, Dispersal) %&gt;%
+            filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
+            summarise() %&gt;%
+            ungroup() %&gt;%
+            filter(
+                Year == &quot;2100&quot;,
+                Model == &quot;SSP1.26&quot;,
+                Dispersal == &quot;Min&quot;
+            ) %&gt;%
+            st_intersection(),
+        thrt_rich_future %&gt;%
+            filter(!is.na(Class)) %&gt;%
+            group_by(Class, Year, Model, Dispersal) %&gt;%
+            filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
+            summarise() %&gt;%
+            ungroup() %&gt;%
+            filter(
+                Year == &quot;2100&quot;,
+                Model == &quot;SSP5.85&quot;,
+                Dispersal == &quot;Min&quot;
+            ) %&gt;%
+            st_intersection(),
+        thrt_rich_future %&gt;%
+            filter(!is.na(Class)) %&gt;%
+            group_by(Class, Year, Model, Dispersal) %&gt;%
+            filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
+            summarise() %&gt;%
+            ungroup() %&gt;%
+            filter(
+                Year == &quot;2100&quot;,
+                Model == &quot;SSP1.26&quot;,
+                Dispersal == &quot;Mean&quot;
+            ) %&gt;%
+            st_intersection(),
+        thrt_rich_future %&gt;%
+            filter(!is.na(Class)) %&gt;%
+            group_by(Class, Year, Model, Dispersal) %&gt;%
+            filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
+            summarise() %&gt;%
+            ungroup() %&gt;%
+            filter(
+                Year == &quot;2100&quot;,
+                Model == &quot;SSP5.85&quot;,
+                Dispersal == &quot;Mean&quot;
+            ) %&gt;%
+            st_intersection(),
+        thrt_rich_future %&gt;%
+            filter(!is.na(Class)) %&gt;%
+            group_by(Class, Year, Model, Dispersal) %&gt;%
+            filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
+            summarise() %&gt;%
+            ungroup() %&gt;%
+            filter(
+                Year == &quot;2100&quot;,
+                Model == &quot;SSP1.26&quot;,
+                Dispersal == &quot;Max&quot;
+            ) %&gt;%
+            st_intersection(),
+        thrt_rich_future %&gt;%
+            filter(!is.na(Class)) %&gt;%
+            group_by(Class, Year, Model, Dispersal) %&gt;%
+            filter(num_thrt &gt; quantile(num_thrt, 0.9)) %&gt;%
+            summarise() %&gt;%
+            ungroup() %&gt;%
+            filter(
+                Year == &quot;2100&quot;,
+                Model == &quot;SSP5.85&quot;,
+                Dispersal == &quot;Max&quot;
+            ) %&gt;%
+            st_intersection()
+    ) %&gt;%
+        mutate(n.overlaps = factor(n.overlaps),
+               Dispersal = factor(Dispersal,
+                                  levels = c(&quot;Min&quot;, &quot;Mean&quot;, &quot;Max&quot;),
+                                  labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
+        ggplot() +
+        geom_sf(
+            data = oz_map  %&gt;%
+                st_transform(
+                    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+                ),
+            colour = NA,
+            fill = &quot;white&quot;
+        ) +
+        geom_sf(
+            aes(fill = n.overlaps),
+            color = NA,
+            size = .1,
+            alpha = .8
+        ) +
+        geom_sf(
+            data = oz_map  %&gt;%
+                st_transform(
+                    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+                ),
+            colour = &quot;black&quot;,
+            fill = NA,
+            size = .3
+        ) +
+        theme_void() +
+        facet_grid(cols = vars(Model), rows = vars(Dispersal)) +
+        theme(legend.position = &quot;right&quot;,
+              strip.text.y = element_text(angle = 270)) +
+        scale_fill_manual(
+            values = c(&quot;yellow&quot;, &quot;red&quot;, &quot;purple&quot;, &quot;black&quot;),
+            name = &quot;No. of classes&quot;
+        ) +
+        coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
+                 ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;])),
+    nrow = 1
 )
 
 ggsave(&quot;output/thrt_hotspots_topten.pdf&quot;, width = 12, height = 6, scale = .8)
@@ -3916,8 +3979,10 @@ ggsave(&quot;output/congruence_years.pdf&quot;)
 
 ## Protected areas
 aus_PA &lt;- read_sf(&quot;data/RAW/CAPAD2020_terrestrial.shp&quot;) %&gt;%
-  st_transform(st_crs(oz_map)) %&gt;%
-  st_crop(st_bbox(oz_map)) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  ) %&gt;%
+  st_crop(map_ext) %&gt;%
   mutate(IUCN = case_when(IUCN %in% c(&quot;NA&quot;, &quot;NAS&quot;, &quot;NR&quot;) ~ &quot;Not Reported&quot;,
                           T ~ IUCN)) %&gt;%
   mutate(IUCN = factor(
@@ -4132,22 +4197,26 @@ but mostly just more visualisations of data and trends.</p>
 tet_summary &lt;- read_csv(&quot;output/SDM/tet_summary.csv&quot;) %&gt;% left_join(tet_iucn %&gt;% select(Binomial, Class) %&gt;% unique()) %&gt;% drop_na(Class)
 
 tet_summary %&gt;%
-  ggplot(aes(x = AUC)) +
+  pivot_longer(1:3) %&gt;%
+  ggplot(aes(x = value)) +
   geom_density(aes(fill = Class), alpha = .8) +
   geom_vline(
-    aes(xintercept = mean_AUC, colour = Class),
+    aes(xintercept = mean, colour = Class),
     data = tet_summary %&gt;%
-      group_by(Class) %&gt;%
-      summarise(mean_AUC = mean(AUC)),
+      pivot_longer(1:3) %&gt;%
+      group_by(Class, name) %&gt;%
+      summarise(mean = mean(value)),
     linetype = &quot;dashed&quot;,
     size = 1
   ) +
   theme_bw() +
-  facet_wrap( ~ Class, ncol = 1) +
+  xlab(&quot;&quot;) +
+  coord_cartesian(xlim = c(0.6, 1)) +
+  facet_wrap(Class ~ name, ncol = 3, scales = &quot;free_y&quot;) +
   scale_fill_manual(values = get_pal(&quot;eastern_rosella&quot;), name = &quot;Class&quot;) +
   scale_colour_manual(values = get_pal(&quot;eastern_rosella&quot;), name = &quot;Class&quot;)
 
-ggsave(&quot;output/auc_summary.pdf&quot;)
+ggsave(&quot;output/eval_summary.pdf&quot;)
 
 # generate map of shifts in range centroids
 p_future_direct &lt;- direct_future %&gt;%
@@ -4180,12 +4249,12 @@ p_future_direct &lt;- direct_future %&gt;%
     name = &quot;Direction Shifted&quot;,
     limits = c(0, 360)
   ) +
-  theme_void() +
+  theme_bw() +
   theme(legend.position = &quot;bottom&quot;) +
   labs(x = &quot;Longitude&quot;,
        y = &quot;Latitude&quot;) +
-  facet_grid(rows = vars(Year),
-             cols = vars(Model)) +
+  facet_grid(cols = vars(Year),
+             rows = vars(Model)) +
   coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
            ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
@@ -4218,7 +4287,7 @@ p_future_magnitude &lt;- direct_future %&gt;%
     colour = &quot;black&quot;,
     fill = NA
   ) +
-  theme_void() +
+  theme_bw() +
   theme(legend.position = &quot;bottom&quot;,
         legend.text = element_text(angle = 45, vjust = 0)) +
   scale_fill_gradient2(
@@ -4229,8 +4298,8 @@ p_future_magnitude &lt;- direct_future %&gt;%
   ) +
   labs(x = &quot;Longitude&quot;,
        y = &quot;Latitude&quot;) +
-  facet_grid(rows = vars(Year),
-             cols = vars(Model)) +
+  facet_grid(cols = vars(Year),
+             rows = vars(Model)) +
   coord_sf(xlim = c(map_ext[&quot;xmin&quot;], map_ext[&quot;xmax&quot;]),
            ylim = c(map_ext[&quot;ymin&quot;], map_ext[&quot;ymax&quot;]))
 
@@ -4249,6 +4318,7 @@ tet_directions_sum %&gt;%
   mutate(Magnitude = log(Magnitude)) %&gt;%
   ggplot(aes(x = Magnitude, fill = Class)) +
   geom_density() +
+  geom_vline(aes(xintercept = 0), colour = &quot;lightgrey&quot;, linetype = &quot;dashed&quot;) +
   geom_vline(
     aes(xintercept = mag_mean, colour = type),
     linetype = &quot;dashed&quot;,
@@ -4270,7 +4340,8 @@ tet_directions_sum %&gt;%
   labs(x = &quot;Range contraction/expansion&quot;)
 
 ggplot2::ggsave(&quot;output/ranges_magnitude.pdf&quot;,
-                width = 13)
+                width = 13,
+                height = 8)
 
 tet_sum &lt;- read_csv(&quot;output/tet_lu_hp.csv&quot;)
 
@@ -4286,6 +4357,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = lu.prop, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4312,6 +4385,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = lu.mean, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4338,6 +4413,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = hp.prop, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4364,6 +4441,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = hp.mean, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4390,6 +4469,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = Camelus_dromedarius, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4416,6 +4497,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = Felis_catus, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4442,6 +4525,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = Oryctolagus_cuniculus, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4468,6 +4553,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = Rhinella_marina, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4494,6 +4581,8 @@ cowplot::plot_grid(
     labs(x = &quot;Background&quot;),
   tet_sum %&gt;%
     filter(!is.na(Model)) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;))) %&gt;%
     ggplot(aes(x = Vulpes_vulpes, fill = Model)) +
     geom_density(alpha = .75) +
     facet_grid(rows = vars(Year), cols = vars(Dispersal)) +
@@ -4589,7 +4678,7 @@ plot_grid(
   labels = &quot;AUTO&quot;
 )
 
-ggplot2::ggsave(&quot;output/feature_importance.pdf&quot;, limitsize = F)
+ggplot2::ggsave(&quot;output/feature_importance.pdf&quot;, limitsize = F, height = 8, width = 10)
 
 features %&gt;%
   dplyr::select(Feature, Type, Model, Gain) %&gt;%
@@ -4610,8 +4699,8 @@ as_tibble(TukeyHSD(aov(Gain ~ Type, features))$Type, rownames = &quot;comparison
 # run sensitivity analyses on omitted species
 drop_sp &lt;-
   read_csv(&quot;output/AA/tet_data_AA.csv&quot;) %&gt;%
-    filter(is.na(Model) &amp; category %in% c(&quot;DD&quot;, &quot;NE&quot;)) %&gt;%
-    pull(Binomial)
+  filter(is.na(Model) &amp; category %in% c(&quot;DD&quot;, &quot;NE&quot;)) %&gt;%
+  pull(Binomial)
 
 tet_omitted &lt;- tet_dist %&gt;%
   left_join(read_csv(&quot;output/SDM/tet_summary.csv&quot;)) %&gt;%
