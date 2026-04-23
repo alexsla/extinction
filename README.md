@@ -22,8 +22,7 @@ Finally, the outputs are used to explore
 
 ![](man/figures/figure3.png)
 
-The full methodology will be described in an upcoming paper, currently
-undergoing revisions. The underlying data required to run these analyses
-will be shared in a data repository upon publication, or are publicly
-available from sources referenced in the paper. The annotated code can
-be seen in <https://alexsla.github.io/extinction/>.
+The full methodology will be described in an upcoming paper. The underlying
+data required to run these analyses will be shared in a data repository upon
+publication, or are publicly available from sources referenced in the paper. 
+he annotated code can be seen in <https://alexsla.github.io/extinction/>.
