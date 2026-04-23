@@ -11,9 +11,9 @@
 
 <meta name="author" content="Alex Slavenko" />
 
-<meta name="date" content="2025-08-29" />
+<meta name="date" content="2026-04-23" />
 
-<title>Over-the-horizon extinction risk analyses for Australian tetrapods</title>
+<title>Over-the-horizon extinction risk analyses</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -350,10 +350,10 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Over-the-horizon extinction risk analyses
-for Australian tetrapods</h1>
+<h1 class="title toc-ignore">Over-the-horizon extinction risk
+analyses</h1>
 <h4 class="author">Alex Slavenko<a href="#fn1" class="footnote-ref" id="fnref1"><sup>1</sup></a></h4>
-<h4 class="date">2025-08-29</h4>
+<h4 class="date">2026-04-23</h4>
 
 </div>
 
@@ -367,11 +367,11 @@ overflow-y: auto;
 <div id="description" class="section level2">
 <h2>Description</h2>
 <p>This R Markdown document contains all of the code accompanying the
-publication <em>Over-the-horizon threat evaluation predicts rapidly
-shifting geographic and taxonomic priorities for the conservation of
-Australian tetrapods</em>. Annotation is included to explain the
-pipelines in detail. Please note these analyses are computationally
-extensive and extremely time-consuming.<br />
+publication <em>Over-the-horizon extinction risk assessment reveals
+rapidly shifting geographic and taxonomic priorities for
+conservation</em>. Annotation is included to explain the pipelines in
+detail. Please note these analyses are computationally extensive and
+extremely time-consuming.<br />
 In order to run the code properly, make sure you have the latest Java
 Development Environment (JDE; <a href="https://www.oracle.com/java/technologies/downloads/" class="uri">https://www.oracle.com/java/technologies/downloads/</a>)
 installed on your computer, and that your working directory contains
@@ -2113,7 +2113,161 @@ tet_iucn %&gt;% write_csv(&quot;output/AA/tet_iucn.csv&quot;)
 tibble(
   accuracy = c(1 - mean(aa_thrt$err), 1 - mean(aa_en_cr$err), 1 - mean(aa_nt$err)),
   model = c(&quot;Threatened vs. No-threatened&quot;, &quot;EN/CR vs VU&quot;, &quot;NT vs LC&quot;)
-) %&gt;% write_csv(&quot;output/AA/accuracy.csv&quot;)</code></pre>
+) %&gt;% write_csv(&quot;output/AA/accuracy.csv&quot;)
+
+# identify species who are predicted to get uplisted
+uplisted &lt;-
+  bind_rows(tet_iucn_future,
+            lapply(unique(disps), function(d)
+              lapply(unique(models), function(m)
+                tet_iucn_current %&gt;%
+                  mutate(Dispersal = d,
+                         Model = m)) %&gt;% bind_rows()) %&gt;% bind_rows()) %&gt;%
+  mutate(category_num = as.numeric(factor(category,
+                                          levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;)))) %&gt;%
+  select(-c(BIOME, category)) %&gt;%
+  pivot_wider(names_from = &quot;Year&quot;,
+              values_from = &quot;category_num&quot;) %&gt;%
+  mutate(`2100` = `2100` - `2080`,
+         `2080` = `2080` - `2060`,
+         `2060` = `2060` - `2040`,
+         `2040` = `2040` - `2010`) %&gt;%
+  pivot_longer(5:9,
+               names_to = &quot;Year&quot;,
+               values_to = &quot;category_num&quot;) %&gt;%
+  mutate(Year = as.numeric(Year)) %&gt;%
+  filter(Year &gt; 2010,
+         category_num &gt; 0) %&gt;%
+  left_join(tet_iucn_future)
+
+## assess feature importance for uplisting
+tet_iucn_sens &lt;- list()
+for(f in features){
+  tet_iucn_sens[[f]] &lt;- list()
+  for (k in 1:24) {
+    pred_future &lt;-
+      tet_data %&gt;% filter(Year == years[[k]], Model == models[[k]], Dispersal == disps[[k]], area &gt; 0) %&gt;%
+      left_join(uplisted %&gt;% select(-category)) %&gt;% drop_na(category_num) %&gt;% select(-c(Year, Model, Dispersal, category_num, Class)) %&gt;%
+      as.data.frame()
+    
+    rownames(pred_future) &lt;-
+      pred_future$Binomial
+    
+    pred_future &lt;- pred_future %&gt;% select(-Binomial)
+    
+    pred_future$class &lt;- class[rownames(pred_future), &quot;Class&quot;]
+    
+    #group biome into  tropical = c(1, 7), temperate = c(8, 4, 10), dry = c(12, 13)
+    pred_future$biome &lt;- pred_future$BIOME
+    pred_future$biome[pred_future$BIOME %in% c(1, 7)] &lt;- &quot;TRO&quot;
+    pred_future$biome[pred_future$BIOME %in% c(8, 4, 10)] &lt;- &quot;TEM&quot;
+    pred_future$biome[pred_future$BIOME %in% c(12, 13)] &lt;- &quot;DRY&quot;
+    
+    X &lt;- pred_future[, c(features, &quot;biome&quot;, &quot;class&quot;)]
+    # data.table::setDT(X)
+    tr_dummies &lt;- caret::dummyVars(~ ., data = X)
+    X &lt;- predict(tr_dummies, X)
+    
+    X[, f] &lt;- NA
+    
+    future &lt;-
+      pred_ass(
+        X,
+        model.threatened = aa_thrt$xgb.final,
+        model.nt = aa_nt$xgb.final,
+        model.en_cr = aa_en_cr$xgb.final
+      )
+    
+    tet_iucn_sens[[f]][[k]] &lt;-
+      tet_data %&gt;% filter(Year == years[[k]], Model == models[[k]], Dispersal == disps[[k]]) %&gt;%
+      dplyr::select(-category) %&gt;%
+      left_join(tibble(Binomial = row.names(pred_future),
+                       category = future)) %&gt;%
+      drop_na(category) %&gt;%
+      mutate(category = case_when(is.na(category) ~ &quot;EX&quot;,
+                                  category == &quot;EN&quot; ~ &quot;EN/CR&quot;,
+                                  T ~ category)) %&gt;%
+      dplyr::select(Binomial, Year, Dispersal, Model, BIOME, category)
+  }
+  tet_iucn_sens[[f]] &lt;-
+    bind_rows(tet_iucn_sens[[f]]) %&gt;% left_join(read_csv(&quot;data/tet_data.csv&quot;) %&gt;% dplyr::select(Binomial, Class)) %&gt;% mutate(feature = f)
+}
+
+bind_rows(tet_iucn_sens) %&gt;%
+    left_join(uplisted %&gt;%
+                  select(-category_num) %&gt;%
+                  rename(original = category)) %&gt;%
+    mutate(diff =
+               as.numeric(factor(category,
+                                 levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;))) -
+               as.numeric(factor(original,
+                                 levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;)))) %&gt;%
+    arrange(diff, Binomial) %&gt;%
+    write_csv(&quot;output/AA/features.csv&quot;)
+
+bind_rows(tet_iucn_sens) %&gt;%
+    left_join(uplisted %&gt;%
+                  select(-category_num) %&gt;%
+                  rename(original = category)) %&gt;%
+    mutate(diff =
+               as.numeric(factor(original,
+                                 levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;))) -
+               as.numeric(factor(category,
+                                 levels = c(&quot;LC&quot;, &quot;NT&quot;, &quot;VU&quot;, &quot;EN/CR&quot;))),
+           Type = case_when(
+               feature %in% c(&quot;area&quot;, &quot;Mass&quot;) ~ &quot;Species traits&quot;,
+               feature %in% c(&quot;hp.mean&quot;, &quot;hp.prop&quot;, &quot;lu.mean&quot;, &quot;lu.prop&quot;) ~ &quot;Habitat&quot;,
+               feature %in% c(
+                   &quot;Rhinella_marina&quot;,
+                   &quot;Felis_catus&quot;,
+                   &quot;Oryctolagus_cuniculus&quot;,
+                   &quot;Vulpes_vulpes&quot;,
+                   &quot;Camelus_dromedarius&quot;
+               ) ~ &quot;Introduced species&quot;,
+               feature %in% c(&quot;biomeDRY&quot;, &quot;biomeTEM&quot;, &quot;biomeTRO&quot;) ~ &quot;Geography&quot;,
+               feature %in% c(&quot;classReptile&quot;, &quot;classAmphibian&quot;, &quot;classMammal&quot;, &quot;classBird&quot;) ~ &quot;Taxonomy&quot;
+           ),
+           feature = case_when(
+               feature == &quot;area&quot; ~ &quot;Range Size&quot;,
+               feature == &quot;hp.mean&quot; ~ &quot;Mean HPD&quot;,
+               feature == &quot;hp.prop&quot; ~ &quot;% HPD&quot;,
+               feature == &quot;lu.mean&quot; ~ &quot;Mean HML&quot;,
+               feature == &quot;lu.prop&quot; ~ &quot;% HML&quot;,
+               feature == &quot;Rhinella_marina&quot; ~ &quot;Cane toads&quot;,
+               feature == &quot;Felis_catus&quot; ~ &quot;Cats&quot;,
+               feature == &quot;Oryctolagus_cuniculus&quot; ~ &quot;European rabbits&quot;,
+               feature == &quot;Vulpes_vulpes&quot; ~ &quot;Red foxes&quot;,
+               feature == &quot;Camelus_dromedarius&quot; ~ &quot;Dromedary camels&quot;,
+               feature == &quot;biomeDRY&quot; ~ &quot;Dry biomes&quot;,
+               feature == &quot;biomeTEM&quot; ~ &quot;Temperate biomes&quot;,
+               feature == &quot;biomeTRO&quot; ~ &quot;Tropical biomes&quot;,
+               feature == &quot;classReptile&quot; ~ &quot;Reptiles&quot;,
+               feature == &quot;classMammal&quot; ~ &quot;Mammals&quot;,
+               feature == &quot;classAmphibian&quot; ~ &quot;Amphibians&quot;,
+               feature == &quot;classBird&quot; ~ &quot;Birds&quot;,
+               T ~ feature
+           )) %&gt;%
+    filter(Year == 2100) %&gt;%
+    ggplot(aes(x = feature, y = Binomial, fill = diff)) +
+    geom_tile() +
+    scale_fill_gradient2(name = &quot;Change in IUCN rank&quot;,
+                         breaks = c(-2, 0, 3),
+                         low = &quot;darkred&quot;,
+                         labels = c(&quot;Uplisted&quot;, &quot;No change&quot;, &quot;Downlisted&quot;)) +
+    facet_grid(cols = vars(Type),
+               rows = vars(Class),
+               switch = &quot;y&quot;,
+               scales = &quot;free&quot;) +
+    theme_bw() +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = &quot;bottom&quot;,
+          legend.key.size = unit(1, &quot;cm&quot;)) +
+    labs(y = &quot;&quot;,
+         x = &quot;Feature&quot;)
+
+ggsave(&quot;output/features_change.pdf&quot;, width = 16, height = 8, scale = .8)</code></pre>
 </div>
 </div>
 <div id="data-analysis" class="section level2">
@@ -4186,7 +4340,233 @@ thrt_PA_future %&gt;%
   scale_fill_manual(values = get_pal(&quot;eastern_rosella&quot;)) +
   theme_bw()
 
-ggsave(&quot;output/PA_overlap.pdf&quot;, width = 12, height = 6, scale = .8)</code></pre>
+ggsave(&quot;output/PA_overlap.pdf&quot;, width = 12, height = 6, scale = .8)
+
+# analysis of no. species in protected areas
+tet_dist_iucn_current2 &lt;-
+  tet_current %&gt;%
+  left_join(tet_iucn %&gt;%
+              mutate(threatened = case_when(
+                category %in% c(&quot;LC&quot;, &quot;NT&quot;) ~ &quot;no&quot;,
+                category %in% c(&quot;VU&quot;, &quot;EN/CR&quot;) ~ &quot;yes&quot;
+              ))) %&gt;%
+  dplyr::filter(Year == 2010) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  )
+
+tet_dist_iucn_future2 &lt;-
+  tet_future %&gt;%
+  mutate(Year = as.numeric(Year)) %&gt;%
+  left_join(tet_iucn %&gt;%
+              mutate(threatened = case_when(
+                category %in% c(&quot;LC&quot;, &quot;NT&quot;) ~ &quot;no&quot;,
+                category %in% c(&quot;VU&quot;, &quot;EN/CR&quot;) ~ &quot;yes&quot;
+              ))) %&gt;%
+  filter(!Year == 2010) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  )
+
+all_PA &lt;- read_sf(&quot;data/all_pa.shp&quot;) %&gt;%
+  st_transform(
+    &quot;+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=61.55,-10.87,-40.19,-39.4924,-32.7221,-32.8979,-9.99400000001316 +units=m +no_defs +type=crs&quot;
+  ) %&gt;%
+  st_make_valid() %&gt;%
+  st_crop(map_ext)
+
+tet_dist_iucn_current2 %&gt;%
+  mutate(area = st_area(geometry)) %&gt;%
+  st_intersection(all_PA) %&gt;%
+  mutate(area_pa = st_area(geometry)) %&gt;%
+  mutate(prop_pa = area_pa / area) %&gt;%
+  as_tibble() %&gt;%
+  dplyr::select(Binomial, Year, Dispersal, Model, BIOME, category, Class, threatened, area, area_pa) %&gt;%
+  write_csv(&quot;output/tet_pa.csv&quot;)
+
+lapply(1:24,
+       function(x)
+         tet_dist_iucn_future2 %&gt;%
+         filter(Year == years[[x]],
+                Model == models[[x]],
+                Dispersal == disps[[x]]) %&gt;%
+         mutate(area = st_area(geometry)) %&gt;%
+         st_intersection(all_PA) %&gt;%
+         mutate(area_pa = st_area(geometry)) %&gt;%
+         mutate(prop_pa = area_pa / area) %&gt;%
+         as_tibble() %&gt;%
+         dplyr::select(Binomial, Year, Dispersal, Model, BIOME, category, Class, threatened, area, area_pa) %&gt;%
+         write_csv(paste0(&quot;output/tet_pa_&quot;, x, &quot;.csv&quot;))
+)
+
+tet_current_pa &lt;-
+  read_csv(&quot;output/tet_pa.csv&quot;) %&gt;%
+  mutate(prop_pa = area_pa/area)
+
+tet_future_pa &lt;-
+  lapply(1:24,
+         function(x)
+           read_csv(paste0(&quot;output/tet_pa_&quot;, x, &quot;.csv&quot;))) %&gt;%
+  bind_rows() %&gt;%
+  mutate(prop_pa = area_pa/area)
+
+lapply(1:24,
+       function(x)
+           tet_current_pa %&gt;%
+           mutate(Year = 2020,
+                  Dispersal = disps[[x]],
+                  Model = models[[x]])) %&gt;%
+    bind_rows() %&gt;%
+    unique() %&gt;%
+    bind_rows(tet_future_pa) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              labels = c(&quot;Limitless&quot;, &quot;Limited&quot;, &quot;None&quot;))) %&gt;%
+    ggplot(aes(x = as.numeric(as.character(Year)), y = prop_pa, fill = Class)) +
+    #geom_boxplot(alpha = .1, colour = &quot;grey75&quot;, aes(group = interaction(Year, Class))) +
+    geom_smooth(aes(colour = Class, fill = Class, linetype = threatened),
+                linewidth = 1, method = &quot;lm&quot;, alpha = .1) +
+    facet_grid(rows = vars(Dispersal),
+               cols = vars(Model)) +
+    theme_pubr() +
+    scale_x_continuous(breaks = c(2020, 2040, 2060, 2080, 2100)) +
+    scale_fill_manual(values = get_pal(&quot;eastern_rosella&quot;)) +
+    scale_colour_manual(values = get_pal(&quot;eastern_rosella&quot;)) +
+    labs(x = &quot;Year&quot;,
+         y = &quot;Mean overlap with PA per species&quot;)
+
+ggsave(&quot;output/mean_overlap.pdf&quot;)
+
+cowplot::plot_grid(
+  lapply(1:24,
+       function(x)
+           tet_current_pa %&gt;%
+           mutate(Year = 2020,
+                  Dispersal = disps[[x]],
+                  Model = models[[x]])) %&gt;%
+    bind_rows() %&gt;%
+    unique() %&gt;%
+    bind_rows(tet_future_pa) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              levels = c(&quot;Min&quot;, &quot;Mean&quot;, &quot;Max&quot;),
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;)),
+           overlap_5 = case_when(prop_pa &gt;= 0.05 ~ &quot;yes&quot;,
+                                 T ~ &quot;no&quot;),
+           overlap_25 = case_when(prop_pa &gt;= 0.25 ~ &quot;yes&quot;,
+                                 T ~ &quot;no&quot;),
+           overlap_50 = case_when(prop_pa &gt;= 0.5 ~ &quot;yes&quot;,
+                                  T ~ &quot;no&quot;)) %&gt;%
+    pivot_longer(12:14) %&gt;%
+    mutate(name = factor(name,
+                         levels = c(&quot;overlap_5&quot;, &quot;overlap_25&quot;, &quot;overlap_50&quot;),
+                         labels = c(&quot;At least 5%&quot;, &quot;At least 25%&quot;, &quot;At least 50%&quot;))) %&gt;%
+    filter(threatened == &quot;no&quot;) %&gt;%
+    group_by(Year, Dispersal, Model, name) %&gt;%
+    count(value) %&gt;%
+    ggplot(aes(x = interaction(as.character(Year), name), y = n, fill = value)) +
+    geom_bar(stat = &quot;identity&quot;, position = &quot;fill&quot;) +
+    facet_grid(cols = vars(Model),
+               rows = vars(Dispersal)) +
+    scale_x_discrete(guide = &quot;axis_nested&quot;) +
+    theme_bw() +
+    theme(legend.position = &quot;bottom&quot;,
+          axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(name = &quot;Overlap with PA&quot;, values = c(&quot;darkred&quot;, &quot;darkblue&quot;)) +
+    labs(x = &quot;Year / Degree of overlap&quot;, y = &quot;Proportion of Species&quot;),
+  lapply(1:24,
+       function(x)
+           tet_current_pa %&gt;%
+           mutate(Year = 2020,
+                  Dispersal = disps[[x]],
+                  Model = models[[x]])) %&gt;%
+    bind_rows() %&gt;%
+    unique() %&gt;%
+    bind_rows(tet_future_pa) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              levels = c(&quot;Min&quot;, &quot;Mean&quot;, &quot;Max&quot;),
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;)),
+           overlap_5 = case_when(prop_pa &gt;= 0.05 ~ &quot;yes&quot;,
+                                 T ~ &quot;no&quot;),
+           overlap_25 = case_when(prop_pa &gt;= 0.25 ~ &quot;yes&quot;,
+                                 T ~ &quot;no&quot;),
+           overlap_50 = case_when(prop_pa &gt;= 0.5 ~ &quot;yes&quot;,
+                                  T ~ &quot;no&quot;)) %&gt;%
+    pivot_longer(12:14) %&gt;%
+    mutate(name = factor(name,
+                         levels = c(&quot;overlap_5&quot;, &quot;overlap_25&quot;, &quot;overlap_50&quot;),
+                         labels = c(&quot;At least 5%&quot;, &quot;At least 25%&quot;, &quot;At least 50%&quot;))) %&gt;%
+    filter(threatened == &quot;yes&quot;) %&gt;%
+    group_by(Year, Dispersal, Model, name) %&gt;%
+    count(value) %&gt;%
+    ggplot(aes(x = interaction(as.character(Year), name), y = n, fill = value)) +
+    geom_bar(stat = &quot;identity&quot;, position = &quot;fill&quot;) +
+    facet_grid(cols = vars(Model),
+               rows = vars(Dispersal)) +
+    scale_x_discrete(guide = &quot;axis_nested&quot;) +
+    theme_bw() +
+    theme(legend.position = &quot;bottom&quot;,
+          axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(name = &quot;Overlap with PA&quot;, values = c(&quot;darkred&quot;, &quot;darkblue&quot;)) +
+    labs(x = &quot;Year / Degree of overlap&quot;, y = &quot;Proportion of Species&quot;),
+  labels = &quot;AUTO&quot;
+)
+
+ggsave(&quot;output/count_overlap.pdf&quot;,
+  scale = 1.5,
+  dpi = 300,
+  width = 13,
+  height = 10)
+
+lapply(1:24,
+       function(x)
+           tet_current_pa %&gt;%
+           mutate(Year = 2020,
+                  Dispersal = disps[[x]],
+                  Model = models[[x]])) %&gt;%
+    bind_rows() %&gt;%
+    unique() %&gt;%
+    bind_rows(tet_future_pa) %&gt;%
+    mutate(Dispersal = factor(Dispersal,
+                              levels = c(&quot;Min&quot;, &quot;Mean&quot;, &quot;Max&quot;),
+                              labels = c(&quot;None&quot;, &quot;Limited&quot;, &quot;Limitless&quot;)),
+           overlap_5 = case_when(prop_pa &gt;= 0.05 ~ &quot;yes&quot;,
+                                 T ~ &quot;no&quot;),
+           overlap_25 = case_when(prop_pa &gt;= 0.25 ~ &quot;yes&quot;,
+                                  T ~ &quot;no&quot;),
+           overlap_50 = case_when(prop_pa &gt;= 0.5 ~ &quot;yes&quot;,
+                                  T ~ &quot;no&quot;)) %&gt;%
+    pivot_longer(12:14) %&gt;%
+    mutate(name = factor(name,
+                         levels = c(&quot;overlap_5&quot;, &quot;overlap_25&quot;, &quot;overlap_50&quot;),
+                         labels = c(&quot;At least 5%&quot;, &quot;At least 25%&quot;, &quot;At least 50%&quot;))) %&gt;%
+    filter(name == &quot;At least 50%&quot;) %&gt;%
+    select(Binomial, Year, Dispersal, Model, Class, name, value) %&gt;%
+    pivot_wider(names_from = Year, values_from = value) %&gt;%
+    mutate(lost = `2020` == &quot;yes&quot; &amp; `2100` == &quot;no&quot;,
+           gained = `2020` == &quot;no&quot; &amp; `2100` == &quot;yes&quot;) %&gt;%
+    group_by(Class, Dispersal, Model, name) %&gt;%
+    summarise(n_lost = sum(lost, na.rm = TRUE),
+              n_gained = sum(gained, na.rm = TRUE),
+              n_total = n(),
+              prop_lost = n_lost / n_total,
+              prop_gained = n_gained / n_total,
+              .groups = &quot;drop&quot;) %&gt;%
+    select(1,2,3,4,8,9) %&gt;%
+    pivot_longer(5:6,
+                 names_to = &quot;type&quot;) %&gt;%
+    mutate(type = factor(type, labels = c(&quot;Reach&quot;, &quot;Lose&quot;))) %&gt;%
+    ggplot(aes(x = Class, y = value, fill = type)) +
+    geom_bar(stat = &quot;identity&quot;, position = &quot;dodge&quot;) +
+    labs(x = &quot;&quot;, y = &quot;Proportion of species (by 2100)&quot;) +
+    scale_y_continuous(labels = scales::percent) +
+    theme_bw() +
+    scale_fill_manual(values = c(get_pal(&quot;eastern_rosella&quot;)[[2]], get_pal(&quot;eastern_rosella&quot;)[[1]]),
+                      name = &quot;50% overlap with PAs&quot;) +
+    facet_grid(cols = vars(Model),
+               rows = vars(Dispersal))
+
+ggsave(&quot;output/count_overlap2.pdf&quot;,
+       width = 10,
+       height = 7)</code></pre>
 </div>
 <div id="supplementary-analyses" class="section level3">
 <h3>Supplementary Analyses</h3>
