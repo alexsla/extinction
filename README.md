@@ -1,4 +1,4 @@
-# Over-the-horizon extinction risk analyses for Australian tetrapods
+# Over-the-horizon extinction risk analyses
 
 This repository contains code required to run analyses of future
 extinction risk for Australia’s land vertebrates. The methodology
