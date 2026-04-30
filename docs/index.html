@@ -11,7 +11,7 @@
 
 <meta name="author" content="Alex Slavenko" />
 
-<meta name="date" content="2026-04-23" />
+<meta name="date" content="2026-04-30" />
 
 <title>Over-the-horizon extinction risk analyses</title>
 
@@ -353,7 +353,7 @@ display: none;
 <h1 class="title toc-ignore">Over-the-horizon extinction risk
 analyses</h1>
 <h4 class="author">Alex Slavenko<a href="#fn1" class="footnote-ref" id="fnref1"><sup>1</sup></a></h4>
-<h4 class="date">2026-04-23</h4>
+<h4 class="date">2026-04-30</h4>
 
 </div>
 
@@ -2674,7 +2674,7 @@ direct_future %&gt;% write_sf(&quot;output/AA/direct_future.shp&quot;)</code></p
 <p>Next we describe how many threatened species there are in each
 time-step under each scenario of climate change, and what predicts
 changes in threatened category. This chunk generates the plots making up
-Figures 1 and S5.</p>
+Figures 1 and S6.</p>
 <pre class="r"><code>library(MASS) #install.packages(&quot;MASS&quot;)
 library(gtsummary) #install.packages(&quot;gtsummary&quot;)
 library(flextable) #install.packages(&quot;flextable&quot;)
@@ -3153,7 +3153,7 @@ ggsave(&quot;output/ssp5_max.pdf&quot;, limitsize = F)</code></pre>
 <div id="species-extinctions" class="section level3">
 <h3>Species Extinctions</h3>
 <p>Next we describe which species are predicted to go extinct and where.
-This chunk generates the plots making up Figures 2 &amp; S6.</p>
+This chunk generates the plots making up Figures 2 &amp; S7.</p>
 <pre class="r"><code># import shapefile of terresterial ecoregions
 biomes &lt;- read_sf(&quot;data/RAW/wwf_terr_ecos.shp&quot;) %&gt;%
   group_by(BIOME) %&gt;%
@@ -3326,7 +3326,7 @@ ggplot2::ggsave(
 <p>The next chunk analyses shifts in threat hotspots and their overlap
 with protected areas, including analyses of congruence between classes.
 This is the main set of analyses, and will likely take a bit of time to
-run. This chunk generates the plots making up Figures 3 and 4.</p>
+run. This chunk generates the plots making up Figures 3-6 and S10.</p>
 <pre class="r"><code>library(cowplot) #install.packages(&quot;cowplot&quot;)
 library(SpatialPack) #install.packages(&quot;SpatialPack&quot;)
 library(feathers) #devtools::install_github(repo = &quot;shandiya/feathers&quot;, ref = &quot;main&quot;)
@@ -4571,7 +4571,7 @@ ggsave(&quot;output/count_overlap2.pdf&quot;,
 <div id="supplementary-analyses" class="section level3">
 <h3>Supplementary Analyses</h3>
 <p>Finally, we have a code chunk that produces all of the plots making
-up Figures S1-S4 and S7-S12. These include several sensitivity analyses,
+up Figures S1-S5 and S8-S9. These include several sensitivity analyses,
 but mostly just more visualisations of data and trends.</p>
 <pre class="r"><code># plot distribution of AUC values
 tet_summary &lt;- read_csv(&quot;output/SDM/tet_summary.csv&quot;) %&gt;% left_join(tet_iucn %&gt;% select(Binomial, Class) %&gt;% unique()) %&gt;% drop_na(Class)

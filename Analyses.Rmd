@@ -2,7 +2,7 @@
 title: "Over-the-horizon extinction risk analyses"
 author:
  - Alex Slavenko^[alex.slavenko1@gmail.com]
-date: '2026-04-23'
+date: '2026-04-30'
 output: html_document
 ---
 
@@ -2252,7 +2252,7 @@ direct_future %>% write_sf("output/AA/direct_future.shp")
 
 ### Threatened Species Richness
 
-Next we describe how many threatened species there are in each time-step under each scenario of climate change, and what predicts changes in threatened category. This chunk generates the plots making up Figures 1 and S5.
+Next we describe how many threatened species there are in each time-step under each scenario of climate change, and what predicts changes in threatened category. This chunk generates the plots making up Figures 1 and S6.
 
 ```{r threatened species, echo=TRUE, eval=FALSE}
 library(MASS) #install.packages("MASS")
@@ -2733,7 +2733,7 @@ ggsave("output/ssp5_max.pdf", limitsize = F)
 
 ### Species Extinctions
 
-Next we describe which species are predicted to go extinct and where. This chunk generates the plots making up Figures 2 & S6.
+Next we describe which species are predicted to go extinct and where. This chunk generates the plots making up Figures 2 & S7.
 
 ```{r species extinctions, echo=TRUE, eval=FALSE}
 # import shapefile of terresterial ecoregions
@@ -2906,7 +2906,7 @@ ggplot2::ggsave(
 
 ### Threat Hotspots
 
-The next chunk analyses shifts in threat hotspots and their overlap with protected areas, including analyses of congruence between classes. This is the main set of analyses, and will likely take a bit of time to run. This chunk generates the plots making up Figures 3 and 4.
+The next chunk analyses shifts in threat hotspots and their overlap with protected areas, including analyses of congruence between classes. This is the main set of analyses, and will likely take a bit of time to run. This chunk generates the plots making up Figures 3-6 and S10.
 
 ```{r threat hotspots, echo=TRUE, eval=FALSE}
 library(cowplot) #install.packages("cowplot")
@@ -4153,7 +4153,7 @@ ggsave("output/count_overlap2.pdf",
 
 ### Supplementary Analyses
 
-Finally, we have a code chunk that produces all of the plots making up Figures S1-S4 and S7-S12. These include several sensitivity analyses, but mostly just more visualisations of data and trends.
+Finally, we have a code chunk that produces all of the plots making up Figures S1-S5 and S8-S9. These include several sensitivity analyses, but mostly just more visualisations of data and trends.
 
 ```{r supplementary, echo=TRUE, eval=FALSE}
 # plot distribution of AUC values
